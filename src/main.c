@@ -1,0 +1,25 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include "policy.h"
+#include "runner.h"
+
+int main(int argc, char **argv)
+{
+        srand((unsigned)time(NULL));
+
+        const char *name = (argc > 1) ? argv[1] : "random";
+        hermes_policy_fn fn = NULL;
+        if      (strcmp(name, "random") == 0) fn = hermes_random_policy;
+        else if (strcmp(name, "rev")    == 0) fn = hermes_rev_policy;
+        else {
+                fprintf(stderr, "unknown policy: %s (expected random|rev)\n",
+                        name);
+                return 1;
+        }
+
+        hermes_run_episode(fn, 1);
+        return 0;
+}
