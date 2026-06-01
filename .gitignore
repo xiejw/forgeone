@@ -1,3 +1,9 @@
+# Generated Assets
 .build
+
+# Vim
 *.swo
 *.swp
+
+# Temp
+py
