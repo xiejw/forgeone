@@ -1,4 +1,4 @@
-CFLAGS = -std=c99 -Wall -Werror -pedantic -Wextra -Wfatal-errors -Wconversion
+CFLAGS = -std=c23 -Wall -Werror -pedantic -Wextra -Wfatal-errors -Wconversion
 ifdef RELEASE
   CFLAGS += -O2 -DNDEBUG -march=native -flto -ffast-math
 endif
@@ -33,4 +33,7 @@ run_rev: all
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test run run_random run_rev clean
+.PHONY: all test run run_random run_rev clean fmt
+
+fmt:
+	~/Workspace/y/tools/scripts/clang_format_all.sh .
