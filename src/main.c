@@ -7,11 +7,6 @@
 #include "policy.h"
 #include "runner.h"
 
-// `defer { hermes_env_deinit( &env ); }` once clang ships the C defer TS
-// (no `-fdefer-ts` flag in clang 21 yet). cleanup attribute matches the
-// semantics: hermes_env_deinit(&env) runs when env leaves scope.
-#define defer_cleanup( F ) __attribute__( ( cleanup( F ) ) )
-
 int
 main( int argc, char **argv )
 {
@@ -29,8 +24,9 @@ main( int argc, char **argv )
                 return 1;
         }
 
-        defer_cleanup( hermes_env_deinit ) struct hermes_env env;
+        struct hermes_env env;
         hermes_env_init( &env );
+        defer { hermes_env_deinit( &env ); }
 
         hermes_run_episode( &env, fn, 1 );
         return 0;

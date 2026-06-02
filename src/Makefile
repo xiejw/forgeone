@@ -1,6 +1,8 @@
-CFLAGS = -std=c23 -Wall -Werror -pedantic -Wextra -Wfatal-errors -Wconversion
+CFLAGS += -std=c23 -Wall -Werror -pedantic -Wextra -Wfatal-errors -Wconversion
+CFLAGS += -fdefer-ts
+
 ifdef RELEASE
-  CFLAGS += -O2 -DNDEBUG -march=native -flto -ffast-math
+CFLAGS += -O2 -DNDEBUG -march=native -flto -ffast-math
 endif
 
 BUILD   = .build

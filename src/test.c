@@ -28,8 +28,9 @@ counting_rev( double pos, double speed )
 static int
 check_policy( const char *name, hermes_policy_fn fn )
 {
-        struct hermes_env env __attribute__( ( cleanup( hermes_env_deinit ) ) );
+        struct hermes_env env;
         hermes_env_init( &env );
+        defer { hermes_env_deinit( &env ); }
 
         step_count    = 0;
         double reward = hermes_run_episode( &env, fn, 0 );
