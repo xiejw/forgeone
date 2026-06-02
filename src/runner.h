@@ -4,8 +4,8 @@
 #include "env.h"
 #include "policy.h"
 
-#define HERMES_MAX_STEPS  1000
-#define HERMES_TRACK_HALF 30
+// Maximum number of steps before the episode is force-terminated.
+#define HERMES_MAX_STEPS 1000
 
 typedef enum hermes_action ( *hermes_policy_fn )( double pos, double speed );
 

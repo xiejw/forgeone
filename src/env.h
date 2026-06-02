@@ -47,7 +47,8 @@ void hermes_env_obs( const struct hermes_env *env, double *pos_out,
 // Advances the simulation by one tick. Writes the step reward into
 // *reward_out. Returns 1 if the env just transitioned to game_over, else 0.
 // Calling on an already-over env is a programmer error.
-int hermes_env_action( struct hermes_env *env, enum hermes_action act,
-                       double *reward_out );
+[[nodiscard]] int hermes_env_action( struct hermes_env *env,
+                                     enum hermes_action act,
+                                     double            *reward_out );
 
 #endif

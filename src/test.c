@@ -1,3 +1,4 @@
+#include <stddefer.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -33,7 +34,7 @@ check_policy( const char *name, hermes_policy_fn fn )
         defer { hermes_env_deinit( &env ); }
 
         step_count    = 0;
-        double reward = hermes_run_episode( &env, fn, 0 );
+        double reward = hermes_run_episode( &env, fn, /*verbose=*/0 );
 
         if ( !( reward >= 1.0 && reward <= (double)HERMES_MAX_STEPS ) ) {
                 fprintf( stderr, "[%s] reward %.1f out of [1, %d]\n", name,

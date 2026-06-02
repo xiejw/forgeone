@@ -1,3 +1,4 @@
+#include <stddefer.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,6 @@ main( int argc, char **argv )
         hermes_env_init( &env );
         defer { hermes_env_deinit( &env ); }
 
-        hermes_run_episode( &env, fn, 1 );
+        hermes_run_episode( &env, fn, /*verbose=*/1 );
         return 0;
 }

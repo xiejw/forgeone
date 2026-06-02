@@ -5,9 +5,14 @@
 
 #include "env.h"
 
+// Half-width of the ASCII track in characters; full track is 2*HALF+1 cells.
+#define HERMES_TRACK_HALF 30
+// Total number of character cells between the '[' and ']' brackets.
 #define HERMES_TRACK_CELLS ( 2 * HERMES_TRACK_HALF + 1 )
 
-#define CYAN  "\033[36m"
+// ANSI escape: cyan foreground, used to highlight the wind indicator.
+#define CYAN "\033[36m"
+// ANSI escape: reset all attributes.
 #define RESET "\033[0m"
 
 // === --- Rendering ---------------------------------------------------- ===
