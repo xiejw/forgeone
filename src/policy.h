@@ -1,8 +1,6 @@
 #ifndef HERMES_POLICY_H
 #define HERMES_POLICY_H
 
-// Index ordering must match py/policy.py ACTIONS so a future NN head's
-// output dim lines up cell-for-cell.
 enum hermes_action {
         HERMES_ACTION_NONE  = 0,
         HERMES_ACTION_LEFT  = 1,
