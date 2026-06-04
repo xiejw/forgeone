@@ -34,6 +34,8 @@ Infrastructure utilities (err_stack) keep the `forge_` prefix as usual.
   `-O2 -DNDEBUG -march=native -flto -ffast-math` as well.
 - Each logical concern gets its own function. No monolithic functions.
 - No third-party libraries — stdlib only unless the project explicitly states otherwise.
+- Ambiguous arguments (booleans, magic integers) at call sites must carry an inline
+  name comment: `/*param_name=*/value`.
 - One blank line between top-level definitions. Section banners for logical groups:
   ```c
   // === --- Section name ----------------------------------------------- ===
@@ -44,6 +46,9 @@ Infrastructure utilities (err_stack) keep the `forge_` prefix as usual.
 
 All constants should be defined at top level to avoid magic numbers. And for
 fixed size array, it is better to check the input length to report error.
+
+- All `#define` constants must have a comment explaining their purpose and units.
+- Public constants go in `.h`; file-private constants go in `.c`.
 
 ## Error Handling
 

@@ -18,13 +18,6 @@ make RELEASE=1 all  # optimized build
 make clean
 ```
 
-## Coding Conventions
-
-- All `#define` constants must have a comment explaining their purpose and units.
-- Public constants go in `.h`; file-private constants go in `.c`.
-- Ambiguous arguments (booleans, magic integers) at call sites must carry an
-  inline name comment: `/*param_name=*/value`.
-
 ## Layout
 
 - `env.h` / `env.c` — `struct hermes_env`, physics constants, per-tick step.
