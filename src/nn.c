@@ -11,8 +11,8 @@
 // A single activation vector flowing through the VM (an operand on the value
 // stack, or a saved activation on the tape).
 struct nn_val {
-        double v[HERMES_NN_MAX_DIM];
-        int    len;
+        float v[HERMES_NN_MAX_DIM];
+        int   len;
 };
 
 // Depth bounds for the two LIFO buffers. The fixed topology threads one live
@@ -30,12 +30,12 @@ struct nn_vm {
         struct nn_val     tape[NN_TAPE_MAX];    // saved forward activations
         int               tp;                   // tape depth
 
-        const double *input;     // observation, length HERMES_NN_IN
-        int           action;    // chosen action, for the REINFORCE seed
-        double        advantage; // scalar reward signal
+        const float *input;     // observation, length HERMES_NN_IN
+        int          action;    // chosen action, for the REINFORCE seed
+        float        advantage; // scalar reward signal
 
-        double logp;                     // log pi(action), set by DSOFTMAX
-        double probs[HERMES_NN_OUT];     // softmax output, set by SOFTMAX
+        float logp;                     // log pi(action), set by DSOFTMAX
+        float probs[HERMES_NN_OUT];     // softmax output, set by SOFTMAX
 };
 
 // === --- Stack / tape helpers ----------------------------------------- ===
@@ -78,10 +78,10 @@ nn_tape_pop( struct nn_vm *vm )
 // A weight matrix and its gradient buffer, with its row-major shape
 // (rows = output units, cols = input units).
 struct nn_weight {
-        double *w;
-        double *g;
-        int     rows;
-        int     cols;
+        float *w;
+        float *g;
+        int    rows;
+        int    cols;
 };
 
 static struct nn_weight
@@ -99,7 +99,7 @@ nn_weight_of( struct hermes_nn *nn, int w_id )
         return ( struct nn_weight ){ 0 };
 }
 
-static double *
+static float *
 nn_bias_of( struct hermes_nn *nn, int b_id )
 {
         switch ( b_id ) {
@@ -112,7 +112,7 @@ nn_bias_of( struct hermes_nn *nn, int b_id )
         return NULL;
 }
 
-static double *
+static float *
 nn_bias_grad_of( struct hermes_nn *nn, int b_id )
 {
         switch ( b_id ) {
@@ -140,7 +140,7 @@ static void
 op_linear( struct nn_vm *vm, const struct nn_instr *in )
 {
         struct nn_weight wt = nn_weight_of( vm->nn, in->a );
-        const double    *b  = nn_bias_of( vm->nn, in->b );
+        const float     *b  = nn_bias_of( vm->nn, in->b );
 
         struct nn_val x = *nn_pop( vm );
         assert( x.len == wt.cols );
@@ -148,7 +148,7 @@ op_linear( struct nn_vm *vm, const struct nn_instr *in )
 
         struct nn_val *out = nn_push( vm, wt.rows );
         for ( int o = 0; o < wt.rows; o++ ) {
-                double acc = b[o];
+                float acc = b[o];
                 for ( int i = 0; i < wt.cols; i++ )
                         acc += wt.w[o * wt.cols + i] * x.v[i];
                 out->v[o] = acc;
@@ -159,9 +159,9 @@ op_linear( struct nn_vm *vm, const struct nn_instr *in )
 static void
 op_tanh( struct nn_vm *vm )
 {
-        struct nn_val z   = *nn_pop( vm );
+        struct nn_val  z   = *nn_pop( vm );
         struct nn_val *out = nn_push( vm, z.len );
-        for ( int i = 0; i < z.len; i++ ) out->v[i] = tanh( z.v[i] );
+        for ( int i = 0; i < z.len; i++ ) out->v[i] = tanhf( z.v[i] );
         nn_tape_push( vm, out );
 }
 
@@ -171,16 +171,16 @@ op_softmax( struct nn_vm *vm )
 {
         struct nn_val z = *nn_pop( vm );
 
-        double max = z.v[0];
+        float max = z.v[0];
         for ( int i = 1; i < z.len; i++ )
                 if ( z.v[i] > max ) max = z.v[i];
 
-        double sum = 0.0;
-        for ( int i = 0; i < z.len; i++ ) sum += exp( z.v[i] - max );
+        float sum = 0.0f;
+        for ( int i = 0; i < z.len; i++ ) sum += expf( z.v[i] - max );
 
         struct nn_val *out = nn_push( vm, z.len );
         for ( int i = 0; i < z.len; i++ )
-                out->v[i] = exp( z.v[i] - max ) / sum;
+                out->v[i] = expf( z.v[i] - max ) / sum;
 
         nn_tape_push( vm, out );
         for ( int i = 0; i < z.len; i++ ) vm->probs[i] = out->v[i];
@@ -198,12 +198,12 @@ op_dsoftmax_reinforce( struct nn_vm *vm )
         struct nn_val p = *nn_tape_pop( vm );
         assert( vm->action >= 0 && vm->action < p.len );
 
-        vm->logp = log( p.v[vm->action] );
+        vm->logp = logf( p.v[vm->action] );
 
         struct nn_val *g = nn_push( vm, p.len );
         for ( int i = 0; i < p.len; i++ ) {
-                double onehot = ( i == vm->action ) ? 1.0 : 0.0;
-                g->v[i]       = ( p.v[i] - onehot ) * vm->advantage;
+                float onehot = ( i == vm->action ) ? 1.0f : 0.0f;
+                g->v[i]      = ( p.v[i] - onehot ) * vm->advantage;
         }
 }
 
@@ -213,7 +213,7 @@ static void
 op_dlinear( struct nn_vm *vm, const struct nn_instr *in )
 {
         struct nn_weight wt = nn_weight_of( vm->nn, in->a );
-        double          *gb = nn_bias_grad_of( vm->nn, in->b );
+        float           *gb = nn_bias_grad_of( vm->nn, in->b );
 
         struct nn_val g = *nn_pop( vm );
         struct nn_val x = *nn_tape_pop( vm );
@@ -227,7 +227,7 @@ op_dlinear( struct nn_vm *vm, const struct nn_instr *in )
 
         struct nn_val *gx = nn_push( vm, wt.cols );
         for ( int i = 0; i < wt.cols; i++ ) {
-                double acc = 0.0;
+                float acc = 0.0f;
                 for ( int o = 0; o < wt.rows; o++ )
                         acc += wt.w[o * wt.cols + i] * g.v[o];
                 gx->v[i] = acc;
@@ -244,7 +244,7 @@ op_dtanh( struct nn_vm *vm )
 
         struct nn_val *out = nn_push( vm, g.len );
         for ( int i = 0; i < g.len; i++ )
-                out->v[i] = g.v[i] * ( 1.0 - h.v[i] * h.v[i] );
+                out->v[i] = g.v[i] * ( 1.0f - h.v[i] * h.v[i] );
 }
 
 // === --- VM engine ---------------------------------------------------- ===
@@ -318,16 +318,16 @@ hermes_nn_compile( struct hermes_nn *nn )
 //
 
 // Half-width of the uniform range for initial weights: w ~ U(-SCALE, SCALE).
-#define NN_INIT_SCALE 0.1
+#define NN_INIT_SCALE 0.1f
 
-static double
+static float
 nn_uniform( void )
 {
-        return ( (double)rand( ) / ( (double)RAND_MAX + 1.0 ) ) * 2.0 - 1.0;
+        return ( (float)rand( ) / ( (float)RAND_MAX + 1.0f ) ) * 2.0f - 1.0f;
 }
 
 static void
-nn_init_weights( double *w, int n )
+nn_init_weights( float *w, int n )
 {
         for ( int i = 0; i < n; i++ ) w[i] = nn_uniform( ) * NN_INIT_SCALE;
 }
@@ -353,13 +353,13 @@ hermes_nn_zero_grad( struct hermes_nn *nn )
 }
 
 static void
-nn_sgd_array( double *w, const double *g, int n, double lr )
+nn_sgd_array( float *w, const float *g, int n, float lr )
 {
         for ( int i = 0; i < n; i++ ) w[i] -= lr * g[i];
 }
 
 void
-hermes_nn_sgd_step( struct hermes_nn *nn, double lr )
+hermes_nn_sgd_step( struct hermes_nn *nn, float lr )
 {
         nn_sgd_array( nn->w1, nn->g_w1, HERMES_NN_HID * HERMES_NN_IN, lr );
         nn_sgd_array( nn->b1, nn->g_b1, HERMES_NN_HID, lr );
@@ -371,10 +371,10 @@ hermes_nn_sgd_step( struct hermes_nn *nn, double lr )
 //
 
 static int
-nn_sample_categorical( const double *probs, int n )
+nn_sample_categorical( const float *probs, int n )
 {
-        double r   = (double)rand( ) / ( (double)RAND_MAX + 1.0 );
-        double acc = 0.0;
+        float r   = (float)rand( ) / ( (float)RAND_MAX + 1.0f );
+        float acc = 0.0f;
         for ( int i = 0; i < n; i++ ) {
                 acc += probs[i];
                 if ( r < acc ) return i;
@@ -383,13 +383,13 @@ nn_sample_categorical( const double *probs, int n )
 }
 
 enum hermes_action
-hermes_nn_act( struct hermes_nn *nn, double pos, double speed,
-               double probs_out[HERMES_NN_OUT] )
+hermes_nn_act( struct hermes_nn *nn, float pos, float speed,
+               float probs_out[HERMES_NN_OUT] )
 {
-        double      obs[HERMES_NN_IN] = { pos, speed };
-        struct nn_vm vm               = { 0 };
-        vm.nn                         = nn;
-        vm.input                      = obs;
+        float        obs[HERMES_NN_IN] = { pos, speed };
+        struct nn_vm vm                = { 0 };
+        vm.nn                          = nn;
+        vm.input                       = obs;
 
         nn_vm_run( &vm, &nn->forward );
 
@@ -398,16 +398,16 @@ hermes_nn_act( struct hermes_nn *nn, double pos, double speed,
                                                             HERMES_NN_OUT );
 }
 
-double
-hermes_nn_accumulate( struct hermes_nn *nn, double pos, double speed,
-                      enum hermes_action action, double advantage )
+float
+hermes_nn_accumulate( struct hermes_nn *nn, float pos, float speed,
+                      enum hermes_action action, float advantage )
 {
-        double      obs[HERMES_NN_IN] = { pos, speed };
-        struct nn_vm vm               = { 0 };
-        vm.nn                         = nn;
-        vm.input                      = obs;
-        vm.action                     = (int)action;
-        vm.advantage                  = advantage;
+        float        obs[HERMES_NN_IN] = { pos, speed };
+        struct nn_vm vm                = { 0 };
+        vm.nn                          = nn;
+        vm.input                       = obs;
+        vm.action                      = (int)action;
+        vm.advantage                   = advantage;
 
         nn_vm_run( &vm, &nn->train );
         return vm.logp;

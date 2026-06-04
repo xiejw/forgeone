@@ -69,15 +69,15 @@ struct nn_program {
 // w1[h * IN + i] is the weight from input i to hidden unit h.
 struct hermes_nn {
         // Parameters.
-        double w1[HERMES_NN_HID * HERMES_NN_IN];
-        double b1[HERMES_NN_HID];
-        double w2[HERMES_NN_OUT * HERMES_NN_HID];
-        double b2[HERMES_NN_OUT];
+        float w1[HERMES_NN_HID * HERMES_NN_IN];
+        float b1[HERMES_NN_HID];
+        float w2[HERMES_NN_OUT * HERMES_NN_HID];
+        float b2[HERMES_NN_OUT];
         // Gradient accumulators, same shapes as the parameters above.
-        double g_w1[HERMES_NN_HID * HERMES_NN_IN];
-        double g_b1[HERMES_NN_HID];
-        double g_w2[HERMES_NN_OUT * HERMES_NN_HID];
-        double g_b2[HERMES_NN_OUT];
+        float g_w1[HERMES_NN_HID * HERMES_NN_IN];
+        float g_b1[HERMES_NN_HID];
+        float g_w2[HERMES_NN_OUT * HERMES_NN_HID];
+        float g_b2[HERMES_NN_OUT];
         // Compiled stack-VM programs (filled by hermes_nn_compile).
         struct nn_program forward;  // logits + softmax only
         struct nn_program train;    // forward followed by backward
@@ -97,20 +97,20 @@ void hermes_nn_compile( struct hermes_nn *nn );
 // Runs the forward program for the observation (pos, speed), writes the action
 // probabilities into probs_out, and returns an action sampled from that
 // categorical distribution.
-enum hermes_action hermes_nn_act( struct hermes_nn *nn, double pos, double speed,
-                                  double probs_out[HERMES_NN_OUT] );
+enum hermes_action hermes_nn_act( struct hermes_nn *nn, float pos, float speed,
+                                  float probs_out[HERMES_NN_OUT] );
 
 // Runs the training program for one REINFORCE sample, accumulating the policy
 // gradient of -log pi(action | obs) * advantage into the g_* buffers. Returns
 // log pi(action | obs). Does not modify parameters; call hermes_nn_sgd_step to
 // apply the accumulated gradients.
-double hermes_nn_accumulate( struct hermes_nn *nn, double pos, double speed,
-                             enum hermes_action action, double advantage );
+float hermes_nn_accumulate( struct hermes_nn *nn, float pos, float speed,
+                            enum hermes_action action, float advantage );
 
 // Zeroes all gradient accumulators.
 void hermes_nn_zero_grad( struct hermes_nn *nn );
 
 // Applies a single SGD update p -= lr * g across all parameters.
-void hermes_nn_sgd_step( struct hermes_nn *nn, double lr );
+void hermes_nn_sgd_step( struct hermes_nn *nn, float lr );
 
 #endif
