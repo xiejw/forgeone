@@ -22,15 +22,27 @@
 // record their output on the activation tape; backward ops consume gradients
 // off the stack, read taped activations, and accumulate into the g_* buffers.
 enum nn_op {
-        // Forward.
-        NN_OP_INPUT,    // push the observation vector (len IN)
-        NN_OP_LINEAR,   // pop x, push W*x + b   (a=w_id, b=b_id, c=out_len)
-        NN_OP_TANH,     // pop z, push tanh(z) elementwise
-        NN_OP_SOFTMAX,  // pop logits, push softmax probs; fills probs_out
-        // Backward (training program only).
-        NN_OP_DSOFTMAX_REINFORCE,  // seed: (probs - onehot(action)) * advantage
-        NN_OP_DTANH,               // grad *= 1 - tanh(z)^2  (uses taped output)
-        NN_OP_DLINEAR,             // accumulate g_W, g_b; push W^T * grad
+        // === --- Forward. --- ===
+        // (tape: what the op saves for its backward partner.)
+
+        // push the observation vector (len IN); tapes nothing
+        NN_OP_INPUT,
+        // pop x, push W*x + b (a=w_id, b=b_id, c=out_len); tapes x
+        NN_OP_LINEAR,
+        // pop z, push tanh(z) elementwise; tapes the output tanh(z)
+        NN_OP_TANH,
+        // pop logits, push softmax probs, fill probs_out; tapes probs
+        NN_OP_SOFTMAX,
+
+        // === --- Backward (training program only).  --- ===
+        // Each pops the matching taped value.
+
+        // tape: probs; seed (probs - onehot(action)) * reward
+        NN_OP_DSOFTMAX_REINFORCE,
+        // tape: tanh(z); grad *= 1 - tanh(z)^2
+        NN_OP_DTANH,
+        // tape: x; accumulate g_W, g_b; push W^T * grad
+        NN_OP_DLINEAR,
 };
 
 // Identifies a parameter block (weight matrix or bias vector) inside
@@ -101,11 +113,11 @@ enum hermes_action hermes_nn_act( struct hermes_nn *nn, float pos, float speed,
                                   float probs_out[HERMES_NN_OUT] );
 
 // Runs the training program for one REINFORCE sample, accumulating the policy
-// gradient of -log pi(action | obs) * advantage into the g_* buffers. Returns
+// gradient of -log pi(action | obs) * reward into the g_* buffers. Returns
 // log pi(action | obs). Does not modify parameters; call hermes_nn_sgd_step to
 // apply the accumulated gradients.
 float hermes_nn_accumulate( struct hermes_nn *nn, float pos, float speed,
-                            enum hermes_action action, float advantage );
+                            enum hermes_action action, float reward );
 
 // Zeroes all gradient accumulators.
 void hermes_nn_zero_grad( struct hermes_nn *nn );

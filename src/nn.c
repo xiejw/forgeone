@@ -48,13 +48,20 @@ struct nn_vm {
         // (NDEBUG, asserts compiled out) the bit instead lets the program
         // finish writing into the safe scratch sink and then aborts in
         // nn_vm_run, rather than letting a bad index silently corrupt state.
-        int           dirty;
-        float         sink_buf[HERMES_NN_MAX_DIM];  // scratch used once dirty
-        struct nn_val sink;                         // handle to sink_buf
+        int dirty;
+        // The sink is a throwaway scratch value handed back by the stack/tape
+        // helpers once a check has failed. With asserts compiled out the run
+        // keeps going, so the failing op still reads and writes *something*;
+        // routing it here — instead of an out-of-range stack/arena slot — keeps
+        // every access inside sink_buf, so the program reaches nn_vm_run's
+        // abort without an out-of-bounds touch. sink_buf is sized to the
+        // largest tensor (HERMES_NN_MAX_DIM) so any single op's write fits.
+        float         sink_buf[HERMES_NN_MAX_DIM];
+        struct nn_val sink;  // handle pointing at sink_buf, armed in nn_vm_run
 
-        const float *input;      // observation, length HERMES_NN_IN
-        int          action;     // chosen action, for the REINFORCE seed
-        float        advantage;  // scalar reward signal
+        const float *input;   // observation, length HERMES_NN_IN
+        int          action;  // chosen action, for the REINFORCE seed
+        float        reward;  // scalar reward signal
 
         float logp;                  // log pi(action), set by DSOFTMAX
         float probs[HERMES_NN_OUT];  // softmax output, set by SOFTMAX
@@ -130,8 +137,9 @@ struct nn_weight {
 };
 
 static struct nn_weight
-nn_weight_of( struct hermes_nn *nn, int w_id )
+nn_weight_of( struct nn_vm *vm, int w_id )
 {
+        struct hermes_nn *nn = vm->nn;
         switch ( w_id ) {
         case NN_PARAM_W1:
                 return (struct nn_weight){ nn->w1, nn->g_w1, HERMES_NN_HID,
@@ -140,34 +148,34 @@ nn_weight_of( struct hermes_nn *nn, int w_id )
                 return (struct nn_weight){ nn->w2, nn->g_w2, HERMES_NN_OUT,
                                            HERMES_NN_HID };
         }
-        assert( 0 && "bad weight id" );
+        NN_REQUIRE( vm, 0 && "bad weight id" );
         return (struct nn_weight){ 0 };
 }
 
 static float *
-nn_bias_of( struct hermes_nn *nn, int b_id )
+nn_bias_of( struct nn_vm *vm, int b_id )
 {
         switch ( b_id ) {
         case NN_PARAM_B1:
-                return nn->b1;
+                return vm->nn->b1;
         case NN_PARAM_B2:
-                return nn->b2;
+                return vm->nn->b2;
         }
-        assert( 0 && "bad bias id" );
-        return NULL;
+        NN_REQUIRE( vm, 0 && "bad bias id" );
+        return vm->sink_buf;
 }
 
 static float *
-nn_bias_grad_of( struct hermes_nn *nn, int b_id )
+nn_bias_grad_of( struct nn_vm *vm, int b_id )
 {
         switch ( b_id ) {
         case NN_PARAM_B1:
-                return nn->g_b1;
+                return vm->nn->g_b1;
         case NN_PARAM_B2:
-                return nn->g_b2;
+                return vm->nn->g_b2;
         }
-        assert( 0 && "bad bias id" );
-        return NULL;
+        NN_REQUIRE( vm, 0 && "bad bias id" );
+        return vm->sink_buf;
 }
 
 // === --- Forward ops -------------------------------------------------- ===
@@ -184,8 +192,8 @@ op_input( struct nn_vm *vm )
 static void
 op_linear( struct nn_vm *vm, const struct nn_instr *in )
 {
-        struct nn_weight wt = nn_weight_of( vm->nn, in->a );
-        const float     *b  = nn_bias_of( vm->nn, in->b );
+        struct nn_weight wt = nn_weight_of( vm, in->a );
+        const float     *b  = nn_bias_of( vm, in->b );
 
         struct nn_val x = *nn_pop( vm );
         NN_REQUIRE( vm, x.len == wt.cols );
@@ -235,7 +243,7 @@ op_softmax( struct nn_vm *vm )
 //
 
 // Seed the gradient on the output logits for REINFORCE:
-//   dL/dz = (probs - onehot(action)) * advantage,   L = -log pi(action) * adv.
+//   dL/dz = (probs - onehot(action)) * reward,   L = -log pi(action) * reward.
 // Also records logp = log pi(action).
 static void
 op_dsoftmax_reinforce( struct nn_vm *vm )
@@ -248,7 +256,7 @@ op_dsoftmax_reinforce( struct nn_vm *vm )
         struct nn_val *g = nn_push( vm, p.len );
         for ( int i = 0; i < p.len; i++ ) {
                 float onehot = ( i == vm->action ) ? 1.0f : 0.0f;
-                g->v[i]      = ( p.v[i] - onehot ) * vm->advantage;
+                g->v[i]      = ( p.v[i] - onehot ) * vm->reward;
         }
 }
 
@@ -257,8 +265,8 @@ op_dsoftmax_reinforce( struct nn_vm *vm )
 static void
 op_dlinear( struct nn_vm *vm, const struct nn_instr *in )
 {
-        struct nn_weight wt = nn_weight_of( vm->nn, in->a );
-        float           *gb = nn_bias_grad_of( vm->nn, in->b );
+        struct nn_weight wt = nn_weight_of( vm, in->a );
+        float           *gb = nn_bias_grad_of( vm, in->b );
 
         struct nn_val g = *nn_pop( vm );
         struct nn_val x = *nn_tape_pop( vm );
@@ -462,14 +470,14 @@ hermes_nn_act( struct hermes_nn *nn, float pos, float speed,
 
 float
 hermes_nn_accumulate( struct hermes_nn *nn, float pos, float speed,
-                      enum hermes_action action, float advantage )
+                      enum hermes_action action, float reward )
 {
         float        obs[HERMES_NN_IN] = { pos, speed };
         struct nn_vm vm                = { 0 };
         vm.nn                          = nn;
         vm.input                       = obs;
         vm.action                      = (int)action;
-        vm.advantage                   = advantage;
+        vm.reward                      = reward;
 
         nn_vm_run( &vm, &nn->train );
         return vm.logp;
