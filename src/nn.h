@@ -12,7 +12,7 @@
 #define HERMES_NN_HID 16
 // Output logits, one per action: none / left / right.
 #define HERMES_NN_OUT 3
-// Largest activation vector the VM stack must hold (max layer width).
+// The maximum number of elements any intermediate tensor can hold.
 #define HERMES_NN_MAX_DIM HERMES_NN_HID
 
 // === --- Stack VM program model --------------------------------------- ===
@@ -23,14 +23,14 @@
 // off the stack, read taped activations, and accumulate into the g_* buffers.
 enum nn_op {
         // Forward.
-        NN_OP_INPUT,   // push the observation vector (len IN)
-        NN_OP_LINEAR,  // pop x, push W*x + b   (a=w_id, b=b_id, c=out_len)
-        NN_OP_TANH,    // pop z, push tanh(z) elementwise
-        NN_OP_SOFTMAX, // pop logits, push softmax probs; fills probs_out
+        NN_OP_INPUT,    // push the observation vector (len IN)
+        NN_OP_LINEAR,   // pop x, push W*x + b   (a=w_id, b=b_id, c=out_len)
+        NN_OP_TANH,     // pop z, push tanh(z) elementwise
+        NN_OP_SOFTMAX,  // pop logits, push softmax probs; fills probs_out
         // Backward (training program only).
-        NN_OP_DSOFTMAX_REINFORCE, // seed: (probs - onehot(action)) * advantage
-        NN_OP_DTANH,              // grad *= 1 - tanh(z)^2  (uses taped output)
-        NN_OP_DLINEAR,            // accumulate g_W, g_b; push W^T * grad
+        NN_OP_DSOFTMAX_REINFORCE,  // seed: (probs - onehot(action)) * advantage
+        NN_OP_DTANH,               // grad *= 1 - tanh(z)^2  (uses taped output)
+        NN_OP_DLINEAR,             // accumulate g_W, g_b; push W^T * grad
 };
 
 // Identifies a parameter block (weight matrix or bias vector) inside

@@ -2,17 +2,19 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 // === --- VM value, tape, and state ------------------------------------ ===
 //
 
-// A single activation vector flowing through the VM (an operand on the value
-// stack, or a saved activation on the tape).
+// A handle to an activation living in the VM's scratch arena: where it starts
+// and how many elements it spans. Carries no data, so stack/tape ops copy only
+// this descriptor, never the underlying array.
 struct nn_val {
-        float v[HERMES_NN_MAX_DIM];
-        int   len;
+        float *v;    // points into vm->arena
+        int    len;  // number of elements
 };
 
 // Depth bounds for the two LIFO buffers. The fixed topology threads one live
@@ -21,54 +23,97 @@ struct nn_val {
 // One tape slot per forward op that saves an activation for its backward
 // partner (LINEAR, TANH, SOFTMAX); margin included.
 #define NN_TAPE_MAX 8
+// Floats the scratch arena must hold for one run. Outputs are never reclaimed
+// mid-run (forward activations stay live for the backward pass), so this is the
+// sum of every op's output length. The train program allocates ~77 floats
+// (INPUT 2 + LINEAR 16 + TANH 16 + LINEAR 3 + SOFTMAX 3 + DSOFTMAX 3 +
+// DLINEAR 16 + DTANH 16 + DLINEAR 2); rounded up with margin.
+#define NN_ARENA_MAX 128
 
 // Execution state for one program run.
 struct nn_vm {
         struct hermes_nn *nn;
-        struct nn_val     stack[NN_STACK_MAX];  // operand stack
-        int               sp;                   // operand stack depth
-        struct nn_val     tape[NN_TAPE_MAX];    // saved forward activations
-        int               tp;                   // tape depth
 
-        const float *input;     // observation, length HERMES_NN_IN
-        int          action;    // chosen action, for the REINFORCE seed
-        float        advantage; // scalar reward signal
+        float arena[NN_ARENA_MAX];  // activation storage
+        int   arena_used;           // floats handed out so far
 
-        float logp;                     // log pi(action), set by DSOFTMAX
-        float probs[HERMES_NN_OUT];     // softmax output, set by SOFTMAX
+        struct nn_val stack[NN_STACK_MAX];  // operand stack (handles)
+        int           sp;                   // operand stack depth
+
+        struct nn_val tape[NN_TAPE_MAX];  // saved forward activations
+        int           tp;                 // tape depth
+
+        // Set when a bounds/shape check fails (see NN_REQUIRE). assert()
+        // catches violations immediately in debug builds; in release builds
+        // (NDEBUG, asserts compiled out) the bit instead lets the program
+        // finish writing into the safe scratch sink and then aborts in
+        // nn_vm_run, rather than letting a bad index silently corrupt state.
+        int           dirty;
+        float         sink_buf[HERMES_NN_MAX_DIM];  // scratch used once dirty
+        struct nn_val sink;                         // handle to sink_buf
+
+        const float *input;      // observation, length HERMES_NN_IN
+        int          action;     // chosen action, for the REINFORCE seed
+        float        advantage;  // scalar reward signal
+
+        float logp;                  // log pi(action), set by DSOFTMAX
+        float probs[HERMES_NN_OUT];  // softmax output, set by SOFTMAX
 };
 
 // === --- Stack / tape helpers ----------------------------------------- ===
 //
 
+// Requires a VM invariant to hold. In debug builds a violation aborts
+// immediately via assert(); in release builds (NDEBUG, asserts compiled out) it
+// instead sets vm->dirty so the helpers fall back to the safe scratch sink and
+// nn_vm_run aborts once the program finishes (see struct nn_vm::dirty).
+#define NN_REQUIRE( vm, cond )             \
+        do {                               \
+                if ( !( cond ) ) {         \
+                        ( vm )->dirty = 1; \
+                        assert( cond );    \
+                }                          \
+        } while ( 0 )
+
+// Push a fresh value: bump-allocate len floats from the arena and return a
+// handle to them. The new region never aliases any prior value, so ops can read
+// their input and write their output without copying the input out first. On a
+// failed check the value goes to the sink so the write stays in bounds.
 static struct nn_val *
 nn_push( struct nn_vm *vm, int len )
 {
-        assert( vm->sp < NN_STACK_MAX );
-        assert( len > 0 && len <= HERMES_NN_MAX_DIM );
+        NN_REQUIRE( vm, vm->sp < NN_STACK_MAX );
+        NN_REQUIRE( vm, len > 0 && len <= HERMES_NN_MAX_DIM );
+        NN_REQUIRE( vm, vm->arena_used + len <= NN_ARENA_MAX );
+        if ( vm->dirty ) return &vm->sink;
         struct nn_val *val = &vm->stack[vm->sp++];
+        val->v             = &vm->arena[vm->arena_used];
         val->len           = len;
+        vm->arena_used += len;
         return val;
 }
 
 static struct nn_val *
 nn_pop( struct nn_vm *vm )
 {
-        assert( vm->sp > 0 );
+        NN_REQUIRE( vm, vm->sp > 0 );
+        if ( vm->dirty ) return &vm->sink;
         return &vm->stack[--vm->sp];
 }
 
 static void
 nn_tape_push( struct nn_vm *vm, const struct nn_val *val )
 {
-        assert( vm->tp < NN_TAPE_MAX );
+        NN_REQUIRE( vm, vm->tp < NN_TAPE_MAX );
+        if ( vm->dirty ) return;
         vm->tape[vm->tp++] = *val;
 }
 
 static struct nn_val *
 nn_tape_pop( struct nn_vm *vm )
 {
-        assert( vm->tp > 0 );
+        NN_REQUIRE( vm, vm->tp > 0 );
+        if ( vm->dirty ) return &vm->sink;
         return &vm->tape[--vm->tp];
 }
 
@@ -89,14 +134,14 @@ nn_weight_of( struct hermes_nn *nn, int w_id )
 {
         switch ( w_id ) {
         case NN_PARAM_W1:
-                return ( struct nn_weight ){ nn->w1, nn->g_w1, HERMES_NN_HID,
-                                             HERMES_NN_IN };
+                return (struct nn_weight){ nn->w1, nn->g_w1, HERMES_NN_HID,
+                                           HERMES_NN_IN };
         case NN_PARAM_W2:
-                return ( struct nn_weight ){ nn->w2, nn->g_w2, HERMES_NN_OUT,
-                                             HERMES_NN_HID };
+                return (struct nn_weight){ nn->w2, nn->g_w2, HERMES_NN_OUT,
+                                           HERMES_NN_HID };
         }
         assert( 0 && "bad weight id" );
-        return ( struct nn_weight ){ 0 };
+        return (struct nn_weight){ 0 };
 }
 
 static float *
@@ -143,7 +188,7 @@ op_linear( struct nn_vm *vm, const struct nn_instr *in )
         const float     *b  = nn_bias_of( vm->nn, in->b );
 
         struct nn_val x = *nn_pop( vm );
-        assert( x.len == wt.cols );
+        NN_REQUIRE( vm, x.len == wt.cols );
         nn_tape_push( vm, &x );
 
         struct nn_val *out = nn_push( vm, wt.rows );
@@ -196,7 +241,7 @@ static void
 op_dsoftmax_reinforce( struct nn_vm *vm )
 {
         struct nn_val p = *nn_tape_pop( vm );
-        assert( vm->action >= 0 && vm->action < p.len );
+        NN_REQUIRE( vm, vm->action >= 0 && vm->action < p.len );
 
         vm->logp = logf( p.v[vm->action] );
 
@@ -217,7 +262,7 @@ op_dlinear( struct nn_vm *vm, const struct nn_instr *in )
 
         struct nn_val g = *nn_pop( vm );
         struct nn_val x = *nn_tape_pop( vm );
-        assert( g.len == wt.rows && x.len == wt.cols );
+        NN_REQUIRE( vm, g.len == wt.rows && x.len == wt.cols );
 
         for ( int o = 0; o < wt.rows; o++ ) {
                 gb[o] += g.v[o];
@@ -240,7 +285,7 @@ op_dtanh( struct nn_vm *vm )
 {
         struct nn_val g = *nn_pop( vm );
         struct nn_val h = *nn_tape_pop( vm );
-        assert( g.len == h.len );
+        NN_REQUIRE( vm, g.len == h.len );
 
         struct nn_val *out = nn_push( vm, g.len );
         for ( int i = 0; i < g.len; i++ )
@@ -253,6 +298,10 @@ op_dtanh( struct nn_vm *vm )
 static void
 nn_vm_run( struct nn_vm *vm, const struct nn_program *prog )
 {
+        // Arm the scratch sink so a failed check has somewhere safe to write.
+        vm->sink.v   = vm->sink_buf;
+        vm->sink.len = HERMES_NN_MAX_DIM;
+
         for ( int pc = 0; pc < prog->len; pc++ ) {
                 const struct nn_instr *in = &prog->instr[pc];
                 switch ( in->op ) {
@@ -278,8 +327,20 @@ nn_vm_run( struct nn_vm *vm, const struct nn_program *prog )
                         op_dlinear( vm, in );
                         break;
                 default:
-                        assert( 0 && "bad opcode" );
+                        NN_REQUIRE( vm, 0 && "bad opcode" );
                 }
+                // A violated invariant means the rest of the run would operate
+                // on degraded state; stop before the next op reads it.
+                if ( vm->dirty ) break;
+        }
+
+        // In debug builds an assert already aborted at the failing check. In
+        // release builds this is the backstop: fail loud rather than return a
+        // silently corrupt result.
+        if ( vm->dirty ) {
+                fprintf( stderr,
+                         "hermes_nn: VM invariant violated; aborting\n" );
+                abort( );
         }
 }
 
@@ -290,7 +351,7 @@ static void
 nn_emit( struct nn_program *prog, int op, int a, int b, int c )
 {
         assert( prog->len < HERMES_NN_PROG_MAX );
-        prog->instr[prog->len++] = ( struct nn_instr ){ op, a, b, c };
+        prog->instr[prog->len++] = (struct nn_instr){ op, a, b, c };
 }
 
 void
@@ -307,7 +368,8 @@ hermes_nn_compile( struct hermes_nn *nn )
         // The training program is the forward pass followed by its reverse.
         struct nn_program *trn = &nn->train;
         trn->len               = 0;
-        for ( int i = 0; i < fwd->len; i++ ) trn->instr[trn->len++] = fwd->instr[i];
+        for ( int i = 0; i < fwd->len; i++ )
+                trn->instr[trn->len++] = fwd->instr[i];
         nn_emit( trn, NN_OP_DSOFTMAX_REINFORCE, 0, 0, 0 );
         nn_emit( trn, NN_OP_DLINEAR, NN_PARAM_W2, NN_PARAM_B2, 0 );
         nn_emit( trn, NN_OP_DTANH, 0, 0, 0 );
@@ -394,8 +456,8 @@ hermes_nn_act( struct hermes_nn *nn, float pos, float speed,
         nn_vm_run( &vm, &nn->forward );
 
         for ( int i = 0; i < HERMES_NN_OUT; i++ ) probs_out[i] = vm.probs[i];
-        return ( enum hermes_action )nn_sample_categorical( vm.probs,
-                                                            HERMES_NN_OUT );
+        return (enum hermes_action)nn_sample_categorical( vm.probs,
+                                                          HERMES_NN_OUT );
 }
 
 float
