@@ -1,0 +1,14 @@
+[package]
+name = "hermes_nn"
+version = "0.1.0"
+edition = "2021"
+
+# Port of the C `src/nn.c` / `src/nn.h` stack-VM MLP policy. No dependencies:
+# the PRNG is hand-rolled so the crate stays std-only, matching the repo's
+# "no third-party libraries" rule.
+
+[lib]
+path = "src/lib.rs"
+
+[profile.release]
+lto = true
