@@ -79,3 +79,54 @@ impl Policy for RevPolicy {
         }
     }
 }
+
+// === --- Tests -------------------------------------------------------- ===
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A) RandomPolicy is roughly uniform over the three actions: each should
+    // appear within 10% of n/3. With n = 30_000 that band is ~12 sigma wide, so
+    // the (seeded, deterministic) test is comfortable, not flaky.
+    #[test]
+    fn random_policy_is_roughly_uniform() {
+        let n = 30_000;
+        let mut policy = RandomPolicy::new(2024);
+        let (mut none, mut left, mut right) = (0, 0, 0);
+        for _ in 0..n {
+            match policy.act(0.0, 0.0) {
+                Action::None => none += 1,
+                Action::Left => left += 1,
+                Action::Right => right += 1,
+            }
+        }
+        assert_eq!(none + left + right, n, "every draw is one of three actions");
+
+        let expected = n as f64 / 3.0;
+        let tol = expected * 0.10;
+        for (name, count) in [("none", none), ("left", left), ("right", right)] {
+            let diff = (count as f64 - expected).abs();
+            assert!(
+                diff <= tol,
+                "{name}: count {count} too far from {expected:.0} (|diff| {diff:.0} > {tol:.0})"
+            );
+        }
+    }
+
+    // B) RevPolicy steers toward center: Left when right of center, Right when
+    // left of center, None dead center — and it ignores speed.
+    #[test]
+    fn rev_policy_steers_toward_center() {
+        let mut policy = RevPolicy;
+        assert_eq!(policy.act(5.0, 0.0), Action::Left, "right of center -> left");
+        assert_eq!(policy.act(-5.0, 0.0), Action::Right, "left of center -> right");
+        assert_eq!(policy.act(0.0, 0.0), Action::None, "dead center -> none");
+
+        // Speed must not change the decision.
+        assert_eq!(policy.act(5.0, 100.0), Action::Left);
+        assert_eq!(policy.act(5.0, -100.0), Action::Left);
+        assert_eq!(policy.act(-5.0, 100.0), Action::Right);
+        assert_eq!(policy.act(0.0, 100.0), Action::None);
+    }
+}
