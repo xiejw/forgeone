@@ -1,8 +1,7 @@
-//! Actions and the hand-written policies. Port of `src/policy.c` / `policy.h`.
+//! Actions and the hand-written policies.
 //!
-//! The `RandomPolicy`/`RevPolicy` split mirrors the original `py/` demo and the
-//! C function pointers, but expressed as a [`Policy`] trait so a stateful policy
-//! (the random one carries its own [`Rng`]) fits naturally.
+//! The `RandomPolicy`/`RevPolicy`  expressed as a [`Policy`] trait so a stateful policy (the random
+//! one carries its own [`Rng`]) fits naturally.
 
 use crate::rng::Rng;
 
@@ -42,6 +41,8 @@ pub trait Policy {
     fn act(&mut self, pos: f64, speed: f64) -> Action;
 }
 
+// === --- RandomPolicy ---------------------------------------------------- ===
+
 /// Picks a uniformly random action each step, ignoring the observation.
 pub struct RandomPolicy {
     rng: Rng,
@@ -49,7 +50,9 @@ pub struct RandomPolicy {
 
 impl RandomPolicy {
     pub fn new(seed: u32) -> RandomPolicy {
-        RandomPolicy { rng: Rng::new(seed) }
+        RandomPolicy {
+            rng: Rng::new(seed),
+        }
     }
 }
 
@@ -58,6 +61,8 @@ impl Policy for RandomPolicy {
         Action::from_index((self.rng.next_u32() % 3) as usize)
     }
 }
+
+// === --- Reverse Policy -------------------------------------------------- ===
 
 /// Steers back toward the center: push left of center-right, right of
 /// center-left, do nothing dead center.

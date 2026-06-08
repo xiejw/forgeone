@@ -227,7 +227,6 @@ impl HermesNn {
         }
         probs.len() - 1 // guard against floating-point shortfall
     }
-
 }
 
 impl Net {
@@ -261,12 +260,8 @@ impl Net {
         b: Param,
     ) -> (&[f32], &mut [f32], &mut [f32], usize, usize) {
         match (w, b) {
-            (Param::W1, Param::B1) => {
-                (&self.w1, &mut self.g_w1, &mut self.g_b1, NN_HID, NN_IN)
-            }
-            (Param::W2, Param::B2) => {
-                (&self.w2, &mut self.g_w2, &mut self.g_b2, NN_OUT, NN_HID)
-            }
+            (Param::W1, Param::B1) => (&self.w1, &mut self.g_w1, &mut self.g_b1, NN_HID, NN_IN),
+            (Param::W2, Param::B2) => (&self.w2, &mut self.g_w2, &mut self.g_b2, NN_OUT, NN_HID),
             _ => panic!("bad dlinear params"),
         }
     }
@@ -285,8 +280,8 @@ struct TensorId(usize);
 /// `prog` and `net` are distinct fields of [`HermesNn`], the VM can hold both
 /// borrows at once without a clone.
 struct Vm<'a> {
-    prog: &'a Program,  // the instruction stream to execute
-    net: &'a mut Net,   // params (read) and grad accumulators (written)
+    prog: &'a Program,      // the instruction stream to execute
+    net: &'a mut Net,       // params (read) and grad accumulators (written)
     tensors: Vec<Vec<f32>>, // registry; replaces the C float arena
     stack: Vec<TensorId>,   // operand stack
     tape: Vec<TensorId>,    // saved forward activations (LIFO)
@@ -295,8 +290,8 @@ struct Vm<'a> {
     action: usize, // chosen action, for the REINFORCE seed
     reward: f32,   // scalar reward signal
 
-    logp: f32,                // log pi(action), set by DSoftmaxReinforce
-    probs: [f32; NN_OUT],     // softmax output, set by Softmax
+    logp: f32,            // log pi(action), set by DSoftmaxReinforce
+    probs: [f32; NN_OUT], // softmax output, set by Softmax
 }
 
 impl<'a> Vm<'a> {

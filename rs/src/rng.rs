@@ -44,10 +44,6 @@ impl Rng {
 
     /// Either -1 or +1 with equal probability.
     pub fn sign(&mut self) -> i32 {
-        if self.next_u32() & 1 == 1 {
-            1
-        } else {
-            -1
-        }
+        if self.next_u32() & 1 == 1 { 1 } else { -1 }
     }
 }

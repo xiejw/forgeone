@@ -1,9 +1,8 @@
-//! The cart environment physics. Port of `src/env.c` / `env.h`.
+//! The cart environment physics.
 //!
 //! Each [`Env::step`] advances the simulation one tick: wind, the chosen action,
 //! friction, motion, then the wind timer / restart roll. The cart survives until
-//! `|position|` reaches [`POSITION_LIMIT`]. Quantities are `f64`, matching C's
-//! `double`.
+//! `|position|` reaches [`POSITION_LIMIT`].
 
 use crate::policy::Action;
 use crate::rng::Rng;
@@ -86,9 +85,15 @@ impl Env {
 
         if self.position.abs() >= POSITION_LIMIT {
             self.game_over = true;
-            Step { reward: 0.0, done: true }
+            Step {
+                reward: 0.0,
+                done: true,
+            }
         } else {
-            Step { reward: REWARD_PER_STEP, done: false }
+            Step {
+                reward: REWARD_PER_STEP,
+                done: false,
+            }
         }
     }
 

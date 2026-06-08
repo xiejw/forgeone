@@ -107,7 +107,10 @@ mod tests {
     // cap is hit, step_count == reward; otherwise step_count == reward + 1.
     fn check_policy(name: &str, policy: &mut dyn Policy) {
         let mut env = Env::new(0xC0FFEE);
-        let mut counting = Counting { inner: policy, steps: 0 };
+        let mut counting = Counting {
+            inner: policy,
+            steps: 0,
+        };
         let reward = run_episode(&mut env, &mut counting, false);
         let steps = counting.steps;
 

@@ -13,7 +13,9 @@ fn main() {
         .map(|d| d.as_nanos() as u32)
         .unwrap_or(1);
 
-    let name = std::env::args().nth(1).unwrap_or_else(|| "random".to_string());
+    let name = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "random".to_string());
     let mut policy: Box<dyn Policy> = match name.as_str() {
         "random" => Box::new(RandomPolicy::new(seed)),
         "rev" => Box::new(RevPolicy),

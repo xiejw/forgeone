@@ -12,8 +12,19 @@ compile:
 run:
 	cd rs ; cargo run
 
+run_rev:
+	cd rs ; cargo run rev
+
+fmt:
+	cd rs ; cargo fmt
+
 test:
 	cd rs ; cargo test --lib --bins
+
+clean_rs:
+	cd rs ; cargo clean
+
+clean: clean_rs
 
 llama_server_install: ${LLAMA_SERVER}
 
