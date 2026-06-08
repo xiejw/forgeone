@@ -1,14 +1,18 @@
 [package]
 name = "hermes_nn"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
-# Port of the C `src/nn.c` / `src/nn.h` stack-VM MLP policy. No dependencies:
-# the PRNG is hand-rolled so the crate stays std-only, matching the repo's
-# "no third-party libraries" rule.
+# No dependencies: the PRNG is hand-rolled so the crate stays std-only,
+# matching the repo's "no third-party libraries" rule.
 
 [lib]
 path = "src/lib.rs"
+
+# The `cart` CLI, mirroring C's `main.c` (`make run` -> `./cart [random|rev]`).
+[[bin]]
+name = "cart"
+path = "src/main.rs"
 
 [profile.release]
 lto = true

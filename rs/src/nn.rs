@@ -20,27 +20,9 @@ const NN_INIT_SCALE: f32 = 0.1;
 
 // === --- Actions ------------------------------------------------------ ===
 
-/// The three discrete actions. Mirrors `enum hermes_action` from `policy.h`;
-/// defined here so the crate is standalone (no FFI). Discriminants match the
-/// softmax output order.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Action {
-    None = 0,
-    Left = 1,
-    Right = 2,
-}
-
-impl Action {
-    /// Maps a softmax output index back to an action.
-    pub fn from_index(i: usize) -> Action {
-        match i {
-            0 => Action::None,
-            1 => Action::Left,
-            2 => Action::Right,
-            _ => panic!("action index out of range: {i}"),
-        }
-    }
-}
+/// Re-export of the action type, which lives in [`crate::policy`] (mirroring C's
+/// `policy.h`). The softmax output maps onto it via [`Action::from_index`].
+pub use crate::policy::Action;
 
 // === --- Stack VM program model --------------------------------------- ===
 
@@ -93,38 +75,9 @@ struct Program {
 
 // === --- PRNG --------------------------------------------------------- ===
 
-/// Small deterministic xorshift generator, replacing C's `srand`/`rand`. Output
-/// does not bit-match the C stream; equivalence is by distribution (and the
-/// gradient check), consistent with `src/CLAUDE.md`'s verification approach.
-struct Rng {
-    state: u32,
-}
-
-impl Rng {
-    fn new(seed: u32) -> Rng {
-        // Force a non-zero state; xorshift gets stuck at 0.
-        Rng { state: seed | 1 }
-    }
-
-    fn next_u32(&mut self) -> u32 {
-        let mut x = self.state;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        self.state = x;
-        x
-    }
-
-    /// Uniform in [0, 1), using the top 24 bits (the f32 mantissa width).
-    fn next_unit(&mut self) -> f32 {
-        (self.next_u32() >> 8) as f32 / (1u32 << 24) as f32
-    }
-
-    /// Uniform in [-1, 1).
-    fn uniform_sym(&mut self) -> f32 {
-        self.next_unit() * 2.0 - 1.0
-    }
-}
+// The xorshift PRNG lives in [`crate::rng`]; weight init and categorical
+// sampling use it.
+use crate::rng::Rng;
 
 // === --- Network ------------------------------------------------------ ===
 
@@ -177,10 +130,10 @@ impl HermesNn {
             rng: Rng::new(seed),
         };
         for i in 0..nn.net.w1.len() {
-            nn.net.w1[i] = nn.rng.uniform_sym() * NN_INIT_SCALE;
+            nn.net.w1[i] = (nn.rng.next_f32() * 2.0 - 1.0) * NN_INIT_SCALE;
         }
         for i in 0..nn.net.w2.len() {
-            nn.net.w2[i] = nn.rng.uniform_sym() * NN_INIT_SCALE;
+            nn.net.w2[i] = (nn.rng.next_f32() * 2.0 - 1.0) * NN_INIT_SCALE;
         }
         nn.compile();
         nn
@@ -264,7 +217,7 @@ impl HermesNn {
     }
 
     fn sample_categorical(&mut self, probs: &[f32]) -> usize {
-        let r = self.rng.next_unit();
+        let r = self.rng.next_f32();
         let mut acc = 0.0;
         for (i, &p) in probs.iter().enumerate() {
             acc += p;

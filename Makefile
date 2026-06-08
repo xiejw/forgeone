@@ -9,6 +9,9 @@ LLAMA_SERVER           = ${LLAMA_SERVER_BUILD_DIR}/server/build/llama_server
 compile:
 	cd rs ; cargo check
 
+run:
+	cd rs ; cargo run
+
 test:
 	cd rs ; cargo test --lib --bins
 
