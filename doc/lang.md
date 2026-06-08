@@ -1,192 +1,74 @@
-# C Projects — Coding Style & Conventions
+# Rust — Coding Style & Conventions
 
-Applies to all C projects under this directory.
+Applies to the Rust crate under `src/`.
 
 ---
 
+## Toolchain & dependencies
+
+- **Edition 2024.** Build with stable `cargo`.
+- **std-only — no third-party crates.** Anything that would normally be a
+  dependency is hand-rolled (e.g. the PRNG in `rng.rs`), keeping the crate
+  self-contained. Add a dependency only if the project explicitly calls for it.
+- Code must build clean under `cargo build`, `cargo test`, and
+  `cargo clippy --all-targets` (zero warnings), and be `cargo fmt`-clean.
+- Build artifacts go to `.build/` (configured in `.cargo/config.toml`), not the
+  default `target/`.
+
+## Module layout
+
+- **One module per concern, one file per module.** Each C-style "translation
+  unit" maps to a file: `env.rs`, `policy.rs`, `runner.rs`, `nn.rs`, `rng.rs`.
+  `lib.rs` declares the modules; `main.rs` is the CLI entry point only.
+- Keep foundational/shared infrastructure in its own module (e.g. `rng.rs`),
+  used by the domain modules rather than duplicated.
+- Put the binary's logic in the library; `main.rs` just wires arguments to it.
+
 ## Naming
 
-- All **public** symbols (functions, types, macros): `forge_` prefix, `snake_case`.
-  - No `typedef` for structs — declare as `struct snake_case_name`.
-  - **Free functions** (no implicit "self"): `verb_noun` — e.g., `forge_convert_html`, `forge_parse_token`.
-  - **Object-like functions** (first arg is the owning struct): `noun_verb` — e.g., `forge_err_init`, `forge_err_emit`.
-- **Internal / static** symbols: `snake_case`, no prefix.
-- Constants / macros: `UPPER_SNAKE_CASE`.
+- Standard Rust casing: `UpperCamelCase` types/traits/enum variants,
+  `snake_case` functions/methods/locals/modules, `SCREAMING_SNAKE_CASE`
+  constants.
+- Methods whose first argument is the owning type take `self`/`&self`/`&mut self`
+  (no manual "self" parameter).
+- Return computed values; do **not** use C-style out-parameters. For multiple
+  results use a tuple or a small named struct (e.g. `env::Step { reward, done }`).
 
-**hermes namespace** — ML data structures, algorithm, and functions
-use the `hermes_` prefix (not `forge_`). Constants use the `HERMES_` prefix.
-Infrastructure utilities (err_stack) keep the `forge_` prefix as usual.
+## Code style
 
-- **forge_ namespace owns all foundational infrastructure** — error handling,
-  parallel utilities, and similar shared data structures always use the `forge_`
-  prefix, even when used by `hermes_` code.  The `hermes_` namespace is reserved
-  for ML domain types and algorithms only.
-- **Output parameters** (pointer args through which a function returns a computed
-  value to the caller) must be named with the `_out` suffix — e.g., `size_t
-  *n_out`, `uint32_t *val_out`, `void *dst_out`.  "In-out" self/object parameters
-  are exempt.
-
-## Code Style
-
-- Standard: **C99** (`-std=c99`).
-- Compiler flags: `-Wall -Werror -pedantic -Wextra -Wfatal-errors -Wconversion`.
-- In Makefile, if `RELEASE` is defined, compiler flags should have
-  `-O2 -DNDEBUG -march=native -flto -ffast-math` as well.
-- Each logical concern gets its own function. No monolithic functions.
-- No third-party libraries — stdlib only unless the project explicitly states otherwise.
-- Ambiguous arguments (booleans, magic integers) at call sites must carry an inline
-  name comment: `/*param_name=*/value`.
-- One blank line between top-level definitions. Section banners for logical groups:
-  ```c
-  // === --- Section name ----------------------------------------------- ===
-  //
+- Each logical concern gets its own function/method. No monolithic functions —
+  e.g. `Env::step` delegates to `apply_wind`, `apply_friction`, etc.
+- Doc comments: `//!` for module-level docs (top of file), `///` for public
+  items. Explain intent and units, not the obvious.
+- Section banners group related items within a file:
+  ```rust
+  // === --- Section name ------------------------------------------------- ===
   ```
+- One blank line between item definitions.
+- Prefer borrows over copies: hold a borrow only as long as needed, and prefer
+  field-disjoint borrows (e.g. `&self.forward` + `&mut self.net`) over cloning to
+  satisfy the borrow checker. Avoid gratuitous `.clone()` / `.to_vec()`.
 
-## Constants and Magic Numbers
+## Constants & magic numbers
 
-All constants should be defined at top level to avoid magic numbers. And for
-fixed size array, it is better to check the input length to report error.
+- No magic numbers: define named constants at the top of the module, each with a
+  comment giving its purpose and units (e.g. the physics constants in `env.rs`).
+- Public constants are `pub const`; module-private ones are plain `const`.
 
-- All `#define` constants must have a comment explaining their purpose and units.
-- Public constants go in `.h`; file-private constants go in `.c`.
+## Error handling & invariants
 
-## Error Handling
+- Shapes and topology are statically known, so internal invariants are checked
+  with `assert!` / `debug_assert!` (e.g. `assert!(!self.game_over)` in
+  `Env::step`, length checks in the VM ops). There is no error-stack machinery —
+  this is a small, fully-static demo.
+- Use `expect("…")` with a message that states the invariant when unwrapping
+  something that "cannot fail" by construction (e.g. stack/tape pops).
+- Reserve `panic!` for genuinely unreachable / programmer-error cases.
 
-All fallible functions use this pattern:
+## Tests
 
-```c
-/* Return 0 on success, 1 on error. Errors are written into stk. */
-int forge_foo(..., struct err_stack *stk);
-```
-
-### struct err_stack
-
-Dynamic char buffer that accumulates error messages. Lives on the caller's stack.
-
-```c
-struct err_stack {
-    char  *buf;
-    size_t len;
-    size_t cap;
-};
-
-void        forge_err_init(struct err_stack *stk);   /* zero-init */
-void        forge_err_deinit(struct err_stack *stk); /* free heap buf */
-void        forge_err_emit(struct err_stack *stk, const char *fmt, ...);
-const char *forge_err_get(const struct err_stack *stk); /* NULL if empty */
-```
-
-### forge_err_emit — indicators and newlines
-
-Each `forge_err_emit` call automatically appends `\n` and prepends a line indicator:
-
-- **First call** (root cause): prefixed with `✗ `
-- **Subsequent calls** (diagnostic notes added by callers): prefixed with `↳ `
-
-The buffer therefore reads root-cause-first, with higher-level context below:
-
-```
-✗ fopen: no such file or directory
-↳ failed to load template file "layout.html"
-↳ render aborted
-```
-
-Implementation: checks `stk->len == 0` to choose the prefix. Uses `vsnprintf` into a doubling buffer (initial cap 256). If `realloc` fails, the message is silently truncated — acceptable for an error-reporting path.
-
-Usage:
-
-```c
-int rc = 0;
-struct err_stack stk = {0};
-forge_err_init(&stk);
-
-if (forge_foo(&stk)) {
-    fprintf(stderr, "%s", forge_err_get(&stk));
-    rc = 1;
-    goto exit;
-}
-
-exit:
-    forge_err_deinit(&stk);
-    return rc;
-```
-
-## Resource Cleanup
-
-Use `goto exit` to consolidate cleanup.  Every resource is freed in a single
-`exit:` label at the end of the function.
-
-```c
-/* Pattern for int-returning functions with heap/file resources: */
-int forge_foo(..., struct err_stack *stk)
-{
-    int   rc   = 0;
-    FILE *f    = NULL;
-    char *buf  = NULL;
-
-    f = fopen(...);
-    if (!f) { forge_err_emit(stk, "..."); rc = 1; goto exit; }
-
-    buf = malloc(...);
-    if (!buf) { forge_err_emit(stk, "..."); rc = 1; goto exit; }
-
-    /* ... normal work ... */
-
-exit:
-    if (f) fclose(f);
-    free(buf);        /* free(NULL) is safe */
-    return rc;
-}
-
-/* Pattern for pointer-returning functions — use ok flag: */
-static char *make_thing(...)
-{
-    int    ok  = 0;
-    FILE  *f   = NULL;
-    char  *buf = NULL;
-
-    f = fopen(...); if (!f) { forge_err_emit(...); goto exit; }
-    buf = malloc(...); if (!buf) { forge_err_emit(...); goto exit; }
-    /* ... fill buf ... */
-    ok = 1;
-
-exit:
-    if (f) fclose(f);
-    if (!ok) { free(buf); buf = NULL; }
-    return buf;
-}
-```
-
-
-### Severity levels
-
-| Situation | Action |
-|---|---|
-| Fatal (malloc fail, file open fail) | `forge_err_emit` + `return 1` immediately |
-| Non-fatal parse/format error | `forge_err_emit` + continue; caller checks at the end |
-
-
-## Build
-
-Each project has a `Makefile` with at minimum:
-
-```makefile
-all:    # builds the main binary into .build/
-test:   # compiles and runs test binary
-clean:  # rm -rf .build
-```
-
-Test binaries link `md2html.c` (or equivalent lib file) directly — **not** `main.c`.
-POSIX functions in tests require `-D_POSIX_C_SOURCE=200809L`.
-
-## File Layout
-
-```
-project/
-  foo.h       -- public types and API
-  foo.c       -- implementation (static internals + public functions)
-  main.c      -- CLI / entry point only
-  test.c      -- test cases
-  Makefile
-  CLAUDE.md   -- project-specific notes
-```
+- Unit tests live in a `#[cfg(test)] mod tests` block at the bottom of the
+  module they cover (`use super::*;`).
+- Test by behavior and bounds, not by matching incidental details (e.g. the
+  random policy is checked for rough uniformity, not an exact RNG sequence; the
+  network's gradients are checked against finite differences).

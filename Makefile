@@ -7,22 +7,22 @@ LLAMA_SERVER           = ${LLAMA_SERVER_BUILD_DIR}/server/build/llama_server
 .PHONY: llama_server_install llama_server_run
 
 compile:
-	cd rs ; cargo check
+	cd src ; cargo check
 
 run:
-	cd rs ; cargo run
+	cd src ; cargo run
 
 run_rev:
-	cd rs ; cargo run rev
+	cd src ; cargo run -- rev
 
 fmt:
-	cd rs ; cargo fmt
+	cd src ; cargo fmt
 
 test:
-	cd rs ; cargo test --lib --bins
+	cd src ; cargo test --lib --bins
 
 clean_rs:
-	cd rs ; cargo clean
+	cd src ; cargo clean
 
 clean: clean_rs
 
