@@ -6,7 +6,14 @@ LLAMA_SERVER           = ${LLAMA_SERVER_BUILD_DIR}/server/build/llama_server
 
 .PHONY: llama_server_install llama_server_run
 
+compile:
+	cd rs ; cargo check
+
+test:
+	cd rs ; cargo test --lib --bins
+
 llama_server_install: ${LLAMA_SERVER}
+
 
 # === --- House Keeping --- ===
 
