@@ -2,7 +2,7 @@
 
 ## Context
 
-The crate (`src/`) is a small cart RL demo. The hand-written policies live in
+The crate (repo root, sources under `src/`) is a small cart RL demo. The hand-written policies live in
 `policy.rs` (`RandomPolicy`, `RevPolicy`), the physics in `env.rs`, the episode
 loop and ASCII renderer in `runner.rs`, and the shared PRNG in `rng.rs`. This
 document covers `nn.rs`: a fixed-topology MLP policy whose **forward** and

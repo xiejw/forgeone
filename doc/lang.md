@@ -1,6 +1,6 @@
 # Rust — Coding Style & Conventions
 
-Applies to the Rust crate under `src/`.
+Applies to the Rust crate at the repo root (sources under `src/`).
 
 ---
 

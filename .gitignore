@@ -1,5 +1,6 @@
 # Generated Assets
 .build
+Cargo.lock
 
 # Vim
 *.swo
