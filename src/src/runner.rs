@@ -13,10 +13,20 @@ const TRACK_CELLS: usize = (2 * TRACK_HALF + 1) as usize;
 
 // === --- Episode loop ------------------------------------------------- ===
 
+/// Whether [`run_episode`] prints each step, replacing a bare `bool` flag.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Verbosity {
+    /// Run silently; only the returned reward is produced.
+    Quiet,
+    /// Print an ASCII track frame per step plus the final total.
+    Verbose,
+}
+
 /// Runs one episode on a freshly built `env`. Returns the total reward. When
-/// `verbose`, prints an ASCII track frame per step plus the final total,
-/// matching `py/runner.py`.
-pub fn run_episode(env: &mut Env, policy: &mut dyn Policy, verbose: bool) -> f64 {
+/// [`Verbosity::Verbose`], prints an ASCII track frame per step plus the final
+/// total, matching `py/runner.py`.
+pub fn run_episode(env: &mut Env, policy: &mut dyn Policy, verbosity: Verbosity) -> f64 {
+    let verbose = verbosity == Verbosity::Verbose;
     let mut total_reward = 0.0;
     for step in 0..MAX_STEPS {
         let (pos, speed) = env.obs();
@@ -111,7 +121,7 @@ mod tests {
             inner: policy,
             steps: 0,
         };
-        let reward = run_episode(&mut env, &mut counting, false);
+        let reward = run_episode(&mut env, &mut counting, Verbosity::Quiet);
         let steps = counting.steps;
 
         assert!(

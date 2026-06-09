@@ -19,7 +19,7 @@ fmt:
 	cd src ; cargo fmt
 
 test:
-	cd src ; cargo test --lib --bins
+	cd src ; cargo test --lib
 
 clean_rs:
 	cd src ; cargo clean

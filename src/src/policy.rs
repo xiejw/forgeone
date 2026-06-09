@@ -119,8 +119,16 @@ mod tests {
     #[test]
     fn rev_policy_steers_toward_center() {
         let mut policy = RevPolicy;
-        assert_eq!(policy.act(5.0, 0.0), Action::Left, "right of center -> left");
-        assert_eq!(policy.act(-5.0, 0.0), Action::Right, "left of center -> right");
+        assert_eq!(
+            policy.act(5.0, 0.0),
+            Action::Left,
+            "right of center -> left"
+        );
+        assert_eq!(
+            policy.act(-5.0, 0.0),
+            Action::Right,
+            "left of center -> right"
+        );
         assert_eq!(policy.act(0.0, 0.0), Action::None, "dead center -> none");
 
         // Speed must not change the decision.
