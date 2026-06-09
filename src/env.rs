@@ -53,8 +53,9 @@ pub struct Env {
 }
 
 impl Env {
-    /// A fresh env at the origin, at rest, with no wind. `seed` drives the wind.
-    pub fn new(seed: u32) -> Env {
+    /// A fresh env at the origin, at rest, with no wind. The caller passes the
+    /// (already split) `rng` that drives this env's wind stream.
+    pub fn new(rng: Rng) -> Env {
         Env {
             position: 0.0,
             speed: 0.0,
@@ -62,7 +63,7 @@ impl Env {
             wind_remaining: 0.0,
             wind_strength: 0.0,
             game_over: false,
-            rng: Rng::new(seed),
+            rng,
         }
     }
 

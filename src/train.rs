@@ -32,8 +32,11 @@ pub struct NNPolicy {
 }
 
 impl NNPolicy {
-    pub fn new(seed: u32) -> NNPolicy {
-        NNPolicy { nn: HermesNn::new(seed) }
+    /// Wraps a fresh network seeded by the caller-supplied (split) `rng`.
+    pub fn new(rng: Rng) -> NNPolicy {
+        NNPolicy {
+            nn: HermesNn::new(rng),
+        }
     }
 }
 
@@ -114,19 +117,23 @@ pub struct ReinforceTrainer {
 
 impl Default for ReinforceTrainer {
     fn default() -> ReinforceTrainer {
-        ReinforceTrainer { lr: LR, gamma: GAMMA }
+        ReinforceTrainer {
+            lr: LR,
+            gamma: GAMMA,
+        }
     }
 }
 
 impl ReinforceTrainer {
-    /// Trains `policy` in place for `episodes` episodes. `seed` drives the
-    /// per-episode environments (each gets a fresh wind stream). Returns the
-    /// final exponential moving average of episode reward.
-    pub fn run(&self, policy: &mut NNPolicy, episodes: usize, seed: u32) -> f32 {
-        let mut seeder = Rng::new(seed);
+    /// Trains `policy` in place for `episodes` episodes. The caller-supplied
+    /// (split) `rng` is the seeder: each episode splits off a fresh, independent
+    /// wind stream. Returns the final exponential moving average of episode
+    /// reward.
+    pub fn run(&self, policy: &mut NNPolicy, episodes: usize, rng: Rng) -> f32 {
+        let mut seeder = rng;
         let mut avg_reward = 0.0;
         for ep in 0..episodes {
-            let mut env = Env::new(seeder.next_u32());
+            let mut env = Env::new(seeder.split());
             let (reward, history) = rollout(&mut env, policy);
 
             let rewards: Vec<f32> = history.iter().map(|t| t.reward).collect();
@@ -142,7 +149,11 @@ impl ReinforceTrainer {
             }
             policy.nn.sgd_step(self.lr / history.len().max(1) as f32);
 
-            avg_reward = if ep == 0 { reward } else { 0.95 * avg_reward + 0.05 * reward };
+            avg_reward = if ep == 0 {
+                reward
+            } else {
+                0.95 * avg_reward + 0.05 * reward
+            };
         }
         avg_reward
     }
@@ -155,11 +166,11 @@ mod tests {
     use super::*;
 
     // Average reward over `runs` fresh episodes (sampling policy).
-    fn eval_avg(policy: &mut NNPolicy, runs: usize, seed: u32) -> f32 {
+    fn eval_avg(policy: &mut NNPolicy, runs: usize, seed: u64) -> f32 {
         let mut seeder = Rng::new(seed);
         let mut total = 0.0;
         for _ in 0..runs {
-            let mut env = Env::new(seeder.next_u32());
+            let mut env = Env::new(seeder.split());
             total += rollout(&mut env, policy).0;
         }
         total / runs as f32
@@ -185,12 +196,12 @@ mod tests {
     #[test]
     fn training_improves_reward() {
         let untrained = {
-            let mut p = NNPolicy::new(7);
+            let mut p = NNPolicy::new(Rng::new(7));
             eval_avg(&mut p, 30, 999)
         };
         let trained = {
-            let mut p = NNPolicy::new(7);
-            ReinforceTrainer::default().run(&mut p, EPISODES, 1);
+            let mut p = NNPolicy::new(Rng::new(7));
+            ReinforceTrainer::default().run(&mut p, EPISODES, Rng::new(1));
             eval_avg(&mut p, 30, 999)
         };
         assert!(

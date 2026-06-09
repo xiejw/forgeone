@@ -49,10 +49,9 @@ pub struct RandomPolicy {
 }
 
 impl RandomPolicy {
-    pub fn new(seed: u32) -> RandomPolicy {
-        RandomPolicy {
-            rng: Rng::new(seed),
-        }
+    /// Builds a random policy driven by the caller-supplied (split) `rng`.
+    pub fn new(rng: Rng) -> RandomPolicy {
+        RandomPolicy { rng }
     }
 }
 
@@ -92,7 +91,7 @@ mod tests {
     #[test]
     fn random_policy_is_roughly_uniform() {
         let n = 30_000;
-        let mut policy = RandomPolicy::new(2024);
+        let mut policy = RandomPolicy::new(Rng::new(2024));
         let (mut none, mut left, mut right) = (0, 0, 0);
         for _ in 0..n {
             match policy.act(0.0, 0.0) {

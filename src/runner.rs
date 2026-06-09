@@ -97,6 +97,7 @@ fn print_frame(step: usize, pos: f64, speed: f64, act: crate::policy::Action, wi
 mod tests {
     use super::*;
     use crate::policy::{Action, RandomPolicy, RevPolicy};
+    use crate::rng::Rng;
 
     // A policy wrapper that counts how many decisions it makes, so the test can
     // relate step_count to reward (mirrors `counting_random`/`counting_rev`).
@@ -116,7 +117,7 @@ mod tests {
     // surviving step earns 1.0; the final game-over step earns 0.0. So if the
     // cap is hit, step_count == reward; otherwise step_count == reward + 1.
     fn check_policy(name: &str, policy: &mut dyn Policy) {
-        let mut env = Env::new(0xC0FFEE);
+        let mut env = Env::new(Rng::new(0xC0FFEE));
         let mut counting = Counting {
             inner: policy,
             steps: 0,
@@ -141,7 +142,7 @@ mod tests {
 
     #[test]
     fn random_policy_reward_bounds() {
-        check_policy("random", &mut RandomPolicy::new(1234));
+        check_policy("random", &mut RandomPolicy::new(Rng::new(1234)));
     }
 
     #[test]

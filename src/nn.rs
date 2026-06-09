@@ -111,9 +111,10 @@ pub struct HermesNn {
 
 impl HermesNn {
     /// Initializes parameters with small random values, zeroes the gradients,
-    /// and compiles the forward/training programs. `seed` makes the result
-    /// reproducible. (Combines C's `hermes_nn_init` + `hermes_nn_compile`.)
-    pub fn new(seed: u32) -> HermesNn {
+    /// and compiles the forward/training programs. The caller-supplied (split)
+    /// `rng` makes the result reproducible and is retained for action sampling.
+    /// (Combines C's `hermes_nn_init` + `hermes_nn_compile`.)
+    pub fn new(rng: Rng) -> HermesNn {
         let mut nn = HermesNn {
             net: Net {
                 w1: [0.0; NN_HID * NN_IN],
@@ -127,7 +128,7 @@ impl HermesNn {
             },
             forward: Program { instr: Vec::new() },
             train: Program { instr: Vec::new() },
-            rng: Rng::new(seed),
+            rng,
         };
         for i in 0..nn.net.w1.len() {
             nn.net.w1[i] = (nn.rng.next_f32() * 2.0 - 1.0) * NN_INIT_SCALE;
@@ -510,7 +511,7 @@ mod tests {
     /// Finite-difference check of the analytic REINFORCE gradient.
     #[test]
     fn grad_check() {
-        let mut nn = HermesNn::new(42);
+        let mut nn = HermesNn::new(Rng::new(42));
         let (pos, speed) = (0.3f32, -0.2f32);
         let action = Action::Left;
         let reward = 1.5f32;
@@ -553,7 +554,7 @@ mod tests {
 
     #[test]
     fn probs_are_distribution() {
-        let mut nn = HermesNn::new(7);
+        let mut nn = HermesNn::new(Rng::new(7));
         let (_, probs) = nn.act(0.1, 0.5);
         let sum: f32 = probs.iter().sum();
         assert!((sum - 1.0).abs() < 1e-5, "probs sum = {sum}");
@@ -564,7 +565,7 @@ mod tests {
 
     #[test]
     fn sgd_increases_chosen_prob() {
-        let mut nn = HermesNn::new(123);
+        let mut nn = HermesNn::new(Rng::new(123));
         let (pos, speed) = (0.2f32, -0.4f32);
         let action = Action::Right;
 
@@ -580,8 +581,8 @@ mod tests {
 
     #[test]
     fn determinism() {
-        let mut a = HermesNn::new(99);
-        let mut b = HermesNn::new(99);
+        let mut a = HermesNn::new(Rng::new(99));
+        let mut b = HermesNn::new(Rng::new(99));
         assert_eq!(a.net.w1, b.net.w1);
         assert_eq!(a.net.w2, b.net.w2);
         let (act_a, _) = a.act(0.25, 0.0);
