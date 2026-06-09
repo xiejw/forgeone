@@ -15,6 +15,9 @@ run:
 run_rev:
 	cd src ; cargo run -- rev
 
+run_nn:
+	cd src ; cargo run -- nn
+
 fmt:
 	cd src ; cargo fmt
 
