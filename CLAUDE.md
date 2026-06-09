@@ -5,7 +5,7 @@ manifest at `Cargo.toml`, sources under `src/` (`env`, `policy`,
 `runner`, `nn`, `rng`, and the `cart` binary in `main.rs`).
 
 Build/run/test from the repo root via the `Makefile` (`make compile`, `make run`,
-`make run_rev`, `make test`, `make fmt`).
+`make run_rev`, `make run_nn`, `make test`, `make fmt`).
 
 ## Coding Style
 

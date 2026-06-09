@@ -18,6 +18,9 @@ run_rev:
 run_nn:
 	cargo run -- nn
 
+eval:
+	cargo run --bin eval
+
 fmt:
 	cargo fmt
 

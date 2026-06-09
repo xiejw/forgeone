@@ -22,6 +22,7 @@ fn main() {
     let name = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "random".to_string());
+
     let mut policy: Box<dyn Policy> = match name.as_str() {
         "random" => Box::new(RandomPolicy::new(rng.split())),
         "rev" => Box::new(RevPolicy),

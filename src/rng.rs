@@ -1,11 +1,5 @@
 //! Splittable deterministic PRNG (DotMix), shared across the crate.
 //!
-//! Ported from the C `rng64` (`rng64.c`/`rng64.h`). Replaces the old xorshift32
-//! stream: instead of one hidden global stream, each consumer (the network's
-//! weight init, the env's wind, the random policy) owns its own seeded [`Rng`].
-//! The output does not bit-match C's `rand`; the ports verify by behavior and
-//! bounds, not by reproducing an exact sequence.
-//!
 //! # The DotMix algorithm
 //!
 //! Each draw advances `seed` by a fixed per-generator coefficient `gamma`
@@ -107,7 +101,9 @@ impl Rng {
             next_gamma_seed: state[1],
         }
     }
+}
 
+impl Rng {
     /// Draws a full 64-bit value: advance the seed (Dot), then finalize (Mix).
     pub fn next_u64(&mut self) -> u64 {
         mix64(self.advance_seed())
@@ -229,6 +225,25 @@ mod tests {
         let mut restored = Rng::from_state(saved);
         let replayed: Vec<u64> = (0..10).map(|_| restored.next_u64()).collect();
         assert_eq!(expected, replayed);
+    }
+
+    #[test]
+    fn from_state_clones_the_generator() {
+        // After advancing, `from_state(rng.state())` must be an exact clone:
+        // the captured state matches, and both produce the same draws in
+        // lockstep going forward.
+        let mut rng = Rng::new(0xABCD_1234);
+        for _ in 0..17 {
+            rng.next_u64();
+        }
+
+        let snapshot = rng.state();
+        let mut clone = Rng::from_state(snapshot);
+        assert_eq!(clone.state(), snapshot, "captured state did not round-trip");
+
+        for _ in 0..1000 {
+            assert_eq!(rng.next_u64(), clone.next_u64());
+        }
     }
 
     #[test]

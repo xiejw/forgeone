@@ -9,10 +9,14 @@ edition = "2024"
 [lib]
 path = "src/lib.rs"
 
-# The `cart` CLI, mirroring C's `main.c` (`make run` -> `./cart [random|rev]`).
 [[bin]]
 name = "cart"
 path = "src/main.rs"
+
+# `eval` runs every policy `RUNS` times and reports average reward.
+[[bin]]
+name = "eval"
+path = "src/eval.rs"
 
 [profile.release]
 lto = true
