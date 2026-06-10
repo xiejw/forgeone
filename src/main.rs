@@ -1,23 +1,15 @@
 //! `cart` CLI: pick a policy, run one verbose episode.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use hermes_nn::env::Env;
-use hermes_nn::policy::{Policy, RandomPolicy, RevPolicy};
-use hermes_nn::rng::Rng;
-use hermes_nn::runner::{Verbosity, run_episode};
-use hermes_nn::train::{EPISODES, NNPolicy, ReinforceTrainer};
+use hermes_rl::base::seeded_rng;
+use hermes_rl::env::Env;
+use hermes_rl::policy::{Policy, RandomPolicy, RevPolicy};
+use hermes_rl::runner::{Verbosity, run_episode};
+use hermes_rl::train::{EPISODES, NNPolicy, ReinforceTrainer};
 
 fn main() {
-    // Seed from the clock so each run differs, like C's `srand(time(NULL))`.
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(1);
-
     // One root generator for the whole program; every consumer gets its own
     // independent stream via `split()` rather than a separately seeded RNG.
-    let mut rng = Rng::new(seed);
+    let mut rng = seeded_rng();
 
     let name = std::env::args()
         .nth(1)

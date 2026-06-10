@@ -1,16 +1,11 @@
 //! `eval` CLI: run every policy `RUNS` times and report the average reward.
 //!
-//! Like `main.rs`, a single root [`Rng`] is created here and split into
-//! independent streams: one per policy (to seed that policy's per-run
-//! environments) plus the streams the policies themselves consume.
-
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use hermes_nn::env::Env;
-use hermes_nn::policy::{Policy, RandomPolicy, RevPolicy};
-use hermes_nn::rng::Rng;
-use hermes_nn::runner::{Verbosity, run_episode};
-use hermes_nn::train::{EPISODES, NNPolicy, ReinforceTrainer};
+use hermes_rl::base::seeded_rng;
+use hermes_rl::env::Env;
+use hermes_rl::policy::{Policy, RandomPolicy, RevPolicy};
+use hermes_rl::rng::Rng;
+use hermes_rl::runner::{Verbosity, run_episode};
+use hermes_rl::train::{EPISODES, NNPolicy, ReinforceTrainer};
 
 /// Episodes averaged per policy.
 const RUNS: usize = 10;
@@ -63,14 +58,8 @@ fn print_table(rows: &[(&str, f64)]) {
 }
 
 fn main() {
-    // Seed from the clock so each run differs, like C's `srand(time(NULL))`.
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(1);
-
     // One root generator; every consumer below gets its own stream via split().
-    let mut rng = Rng::new(seed);
+    let mut rng = seeded_rng();
 
     // Train the network policy once before evaluating it.
     let mut nn = NNPolicy::new(rng.split());
@@ -80,11 +69,8 @@ fn main() {
     let mut rev = RevPolicy;
 
     // (name, policy) pairs; each is evaluated on its own env stream.
-    let mut policies: [(&str, &mut dyn Policy); 3] = [
-        ("random", &mut random),
-        ("rev", &mut rev),
-        ("nn", &mut nn),
-    ];
+    let mut policies: [(&str, &mut dyn Policy); 3] =
+        [("random", &mut random), ("rev", &mut rev), ("nn", &mut nn)];
 
     let results: Vec<(&str, f64)> = policies
         .iter_mut()

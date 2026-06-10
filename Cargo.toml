@@ -1,7 +1,10 @@
 [package]
-name = "hermes_nn"
+name = "hermes_rl"
 version = "0.1.0"
 edition = "2024"
+# `cargo run` (and `make run`/`run_rev`/`run_nn`) default to the `cart` CLI;
+# the `eval` binary is selected explicitly via `cargo run --bin eval`.
+default-run = "cart"
 
 # No dependencies: the PRNG is hand-rolled so the crate stays std-only,
 # matching the repo's "no third-party libraries" rule.
