@@ -18,6 +18,9 @@ run_rev:
 run_nn:
 	cargo run -- nn
 
+run_grpo:
+	cargo run -- grpo
+
 eval:
 	cargo run --bin eval
 

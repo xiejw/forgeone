@@ -11,41 +11,14 @@
 //! `loss = -Σ_t log π(a_t|s_t) · Ĝ_t` — is the same.
 
 use crate::env::Env;
-use crate::nn::HermesNn;
-use crate::policy::{Action, Policy};
+use crate::policy::{Action, NNPolicy, Policy};
 use crate::rng::Rng;
 use crate::runner::MAX_STEPS;
 
-/// Training episodes (mirrors `py/train.py`).
-pub const EPISODES: usize = 400;
 /// SGD learning rate.
 pub const LR: f32 = 0.05;
 /// Reward discount factor.
 pub const GAMMA: f32 = 0.99;
-
-// === --- NNPolicy ----------------------------------------------------- ===
-
-/// A policy backed by the stack-VM MLP. Each decision samples from the network's
-/// softmax over actions.
-pub struct NNPolicy {
-    nn: HermesNn,
-}
-
-impl NNPolicy {
-    /// Wraps a fresh network seeded by the caller-supplied (split) `rng`.
-    pub fn new(rng: Rng) -> NNPolicy {
-        NNPolicy {
-            nn: HermesNn::new(rng),
-        }
-    }
-}
-
-impl Policy for NNPolicy {
-    fn act(&mut self, pos: f64, speed: f64) -> Action {
-        // The env works in f64; the network in f32.
-        self.nn.act(pos as f32, speed as f32).0
-    }
-}
 
 // === --- REINFORCE ---------------------------------------------------- ===
 
@@ -201,7 +174,7 @@ mod tests {
         };
         let trained = {
             let mut p = NNPolicy::new(Rng::new(7));
-            ReinforceTrainer::default().run(&mut p, EPISODES, Rng::new(1));
+            ReinforceTrainer::default().run(&mut p, crate::base::EPISODES, Rng::new(1));
             eval_avg(&mut p, 30, 999)
         };
         assert!(

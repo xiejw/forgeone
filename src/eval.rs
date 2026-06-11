@@ -1,11 +1,11 @@
 //! `eval` CLI: run every policy `RUNS` times and report the average reward.
 //!
-use hermes_rl::base::seeded_rng;
+use hermes_rl::base::{EPISODES, seeded_rng};
 use hermes_rl::env::Env;
-use hermes_rl::policy::{Policy, RandomPolicy, RevPolicy};
+use hermes_rl::policy::{NNPolicy, Policy, RandomPolicy, RevPolicy};
 use hermes_rl::rng::Rng;
 use hermes_rl::runner::{Verbosity, run_episode};
-use hermes_rl::trainer_reinforce::{EPISODES, NNPolicy, ReinforceTrainer};
+use hermes_rl::trainer_reinforce::ReinforceTrainer;
 
 /// Episodes averaged per policy.
 const RUNS: usize = 10;

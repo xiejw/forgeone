@@ -1,10 +1,11 @@
 //! `cart` CLI: pick a policy, run one verbose episode.
 
-use hermes_rl::base::seeded_rng;
+use hermes_rl::base::{EPISODES, seeded_rng};
 use hermes_rl::env::Env;
-use hermes_rl::policy::{Policy, RandomPolicy, RevPolicy};
+use hermes_rl::policy::{NNPolicy, Policy, RandomPolicy, RevPolicy};
 use hermes_rl::runner::{Verbosity, run_episode};
-use hermes_rl::trainer_reinforce::{EPISODES, NNPolicy, ReinforceTrainer};
+use hermes_rl::trainer_grpo::{GrpoTrainer, ITERATIONS, RandomJudge};
+use hermes_rl::trainer_reinforce::ReinforceTrainer;
 
 fn main() {
     // One root generator for the whole program; every consumer gets its own
@@ -25,8 +26,17 @@ fn main() {
             eprintln!("[nn] trained {EPISODES} episodes; EMA reward ~ {avg:.1}");
             Box::new(p)
         }
+        "grpo" => {
+            // Train a fresh network with GRPO, scoring rollouts with the (random)
+            // LLM judge instead of the env reward, then demo it.
+            let mut p = NNPolicy::new(rng.split());
+            let mut judge = RandomJudge::new(rng.split());
+            let avg = GrpoTrainer::default().run(&mut p, &mut judge, ITERATIONS, rng.split());
+            eprintln!("[grpo] trained {ITERATIONS} updates; EMA judge reward ~ {avg:.2}");
+            Box::new(p)
+        }
         other => {
-            eprintln!("unknown policy: {other} (expected random|rev|nn)");
+            eprintln!("unknown policy: {other} (expected random|rev|nn|grpo)");
             std::process::exit(1);
         }
     };

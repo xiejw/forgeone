@@ -1,8 +1,10 @@
-//! Actions and the hand-written policies.
+//! Actions and the policies.
 //!
-//! The `RandomPolicy`/`RevPolicy`  expressed as a [`Policy`] trait so a stateful policy (the random
-//! one carries its own [`Rng`]) fits naturally.
+//! The hand-written `RandomPolicy`/`RevPolicy` and the network-backed
+//! [`NNPolicy`] are expressed as a [`Policy`] trait so a stateful policy (the
+//! random one carries its own [`Rng`], the network one its MLP) fits naturally.
 
+use crate::nn::HermesNn;
 use crate::rng::Rng;
 
 /// The three discrete actions. Mirrors `enum hermes_action` from `policy.h`.
@@ -76,6 +78,33 @@ impl Policy for RevPolicy {
         } else {
             Action::None
         }
+    }
+}
+
+// === --- NNPolicy ----------------------------------------------------- ===
+
+/// A policy backed by the stack-VM MLP. Each decision samples from the network's
+/// softmax over actions.
+pub struct NNPolicy {
+    /// Crate-visible so the trainers (e.g. [`crate::trainer_reinforce`],
+    /// [`crate::trainer_grpo`]) can drive the gradient ops —
+    /// `zero_grad`/`accumulate`/`sgd_step`.
+    pub(crate) nn: HermesNn,
+}
+
+impl NNPolicy {
+    /// Wraps a fresh network seeded by the caller-supplied (split) `rng`.
+    pub fn new(rng: Rng) -> NNPolicy {
+        NNPolicy {
+            nn: HermesNn::new(rng),
+        }
+    }
+}
+
+impl Policy for NNPolicy {
+    fn act(&mut self, pos: f64, speed: f64) -> Action {
+        // The env works in f64; the network in f32.
+        self.nn.act(pos as f32, speed as f32).0
     }
 }
 
