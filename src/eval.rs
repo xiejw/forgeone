@@ -5,7 +5,7 @@ use hermes_rl::env::Env;
 use hermes_rl::policy::{Policy, RandomPolicy, RevPolicy};
 use hermes_rl::rng::Rng;
 use hermes_rl::runner::{Verbosity, run_episode};
-use hermes_rl::train::{EPISODES, NNPolicy, ReinforceTrainer};
+use hermes_rl::trainer_reinforce::{EPISODES, NNPolicy, ReinforceTrainer};
 
 /// Episodes averaged per policy.
 const RUNS: usize = 10;

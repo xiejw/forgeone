@@ -2,7 +2,7 @@
 //!
 //! Modules: [`env`] (cart physics), [`policy`] (actions + the hand-written
 //! `RandomPolicy`/`RevPolicy`), [`runner`] (episode loop + ASCII render), [`nn`]
-//! (the stack-VM MLP engine), [`train`] (the learned `NNPolicy` + REINFORCE
+//! (the stack-VM MLP engine), [`trainer_reinforce`] (the learned `NNPolicy` + REINFORCE
 //! trainer), [`rng`] (the shared PRNG), and [`base`] (shared binary helpers).
 //!
 //! The [`nn`] engine is a small stack VM: forward ops push activations on a value
@@ -18,4 +18,4 @@ pub mod policy;
 pub mod rng;
 pub mod runner;
 pub mod simple_json;
-pub mod train;
+pub mod trainer_reinforce;
