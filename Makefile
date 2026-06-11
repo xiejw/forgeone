@@ -2,7 +2,7 @@ BUILD  = .build
 SHELL := /bin/bash
 
 LLAMA_SERVER_BUILD_DIR = ${BUILD}/server
-LLAMA_SERVER           = ${LLAMA_SERVER_BUILD_DIR}/server/build/llama_server
+LLAMA_SERVER           = ${LLAMA_SERVER_BUILD_DIR}/build/bin/llama-server
 
 .PHONY: llama_server_install llama_server_run
 
@@ -37,6 +37,8 @@ clean: clean_rs
 
 llama_server_install: ${LLAMA_SERVER}
 
+llama_server_run: ${LLAMA_SERVER}
+
 
 # === --- House Keeping --- ===
 
@@ -52,5 +54,8 @@ ${LLAMA_SERVER_BUILD_DIR}:
 	mkdir -p $@
 
 ${LLAMA_SERVER}: ${LLAMA_SERVER_BUILD_DIR}
+	@echo "building ${LLAMA_SERVER}"
 	sh scripts/llama_server_install.sh ${LLAMA_SERVER_BUILD_DIR}
 
+llama_server_run:
+	sh scripts/llama_server_run.sh ${LLAMA_SERVER_BUILD_DIR}

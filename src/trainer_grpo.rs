@@ -129,7 +129,9 @@ fn build_prompt(rollout: &[RolloutStep]) -> String {
         "You are an impartial judge scoring how well an agent balanced a cart.\n\
          The agent survived {steps} steps; final position {final_pos:.2}, final speed {final_speed:.2}.\n\
          Action sequence (n=none, l=left, r=right): {actions}\n\
-         Reply with ONLY a single number between 0 and 1 rating the rollout's quality.",
+         Reply with ONLY a single number between 0.0 and 1.0 rating the rollout's quality.\n\
+         If the sequence could be longer, the score should be higher\n\
+         If the sequence could make the cart near center. The score should be higher",
         steps = rollout.len(),
     )
 }
