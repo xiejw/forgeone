@@ -9,8 +9,13 @@
 //! step. So an action is reinforced only insofar as its rollout beat the others
 //! sampled alongside it; the group mean is the baseline (no learned value head).
 //!
-//! [`RandomJudge`] is a placeholder judge that returns a random reward; swap in
-//! a real LLM-backed scorer by implementing [`LlmJudge`].
+//! [`LlamaJudge`] is the production judge — it asks a local llama.cpp server to
+//! score the rollout. A test-only `RandomJudge` (in the `tests` module) stands
+//! in where a deterministic, offline [`LlmJudge`] is needed.
+
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::time::Duration;
 
 use crate::base::EPISODES;
 use crate::env::Env;
@@ -18,11 +23,12 @@ use crate::policy::{Action, NNPolicy, Policy};
 use crate::rng::Rng;
 use crate::runner::MAX_STEPS;
 
-/// Number of GRPO updates; each update samples a whole group of rollouts. Kept
-/// equal to REINFORCE's [`EPISODES`] so the two trainers run the same length.
-pub const ITERATIONS: usize = EPISODES;
 /// Rollouts sampled per update — the "group" the advantage is relative to.
 pub const GROUP_SIZE: usize = 8;
+/// Number of GRPO updates. Each update samples [`GROUP_SIZE`] rollouts, so this
+/// is [`EPISODES`] `/ GROUP_SIZE`: GRPO then consumes the same total number of
+/// env rollouts as REINFORCE's [`EPISODES`] episodes, a fair sample budget.
+pub const ITERATIONS: usize = EPISODES / GROUP_SIZE;
 /// SGD learning rate.
 pub const LR: f32 = 0.05;
 
@@ -45,24 +51,221 @@ pub trait LlmJudge {
     fn judge(&mut self, rollout: &[RolloutStep]) -> f32;
 }
 
-/// A placeholder judge that returns a uniform random reward in `[0, 1)`,
-/// ignoring the rollout's contents. Stands in until a real LLM scorer is wired
-/// up behind [`LlmJudge`].
-pub struct RandomJudge {
-    rng: Rng,
+// === --- Llama judge -------------------------------------------------- ===
+
+/// Default host/port of the llama.cpp server.
+const DEFAULT_HOST: &str = "127.0.0.1";
+const DEFAULT_PORT: u16 = 8080;
+/// Tokens the judge is allowed to generate — a float string is short.
+const N_PREDICT: u32 = 16;
+/// Socket read/write timeout: generation can be slow, so be generous.
+const HTTP_TIMEOUT_SECS: u64 = 120;
+/// Cap on the action string in the prompt, so long rollouts stay bounded.
+const MAX_ACTION_CHARS: usize = 256;
+
+/// A real LLM judge: it asks a llama.cpp server (its `/completion` endpoint) to
+/// rate a rollout, and parses the float reward out of the model's reply.
+///
+/// The server is assumed reachable and to return a float string; any failure
+/// (connection, malformed reply, no number) panics, since a silently-wrong
+/// reward would corrupt training. Run the server with e.g.
+/// `llama-server -m model.gguf --port 8080`.
+pub struct LlamaJudge {
+    host: String,
+    port: u16,
+    n_predict: u32,
 }
 
-impl RandomJudge {
-    /// Builds a random judge driven by the caller-supplied (split) `rng`.
-    pub fn new(rng: Rng) -> RandomJudge {
-        RandomJudge { rng }
+impl LlamaJudge {
+    /// Targets the default local endpoint, `127.0.0.1:8080`.
+    pub fn new() -> LlamaJudge {
+        LlamaJudge::with_endpoint(DEFAULT_HOST, DEFAULT_PORT)
+    }
+
+    /// Targets an explicit `host:port` llama.cpp server.
+    pub fn with_endpoint(host: &str, port: u16) -> LlamaJudge {
+        LlamaJudge {
+            host: host.to_string(),
+            port,
+            n_predict: N_PREDICT,
+        }
     }
 }
 
-impl LlmJudge for RandomJudge {
-    fn judge(&mut self, _rollout: &[RolloutStep]) -> f32 {
-        self.rng.next_f32()
+impl Default for LlamaJudge {
+    fn default() -> LlamaJudge {
+        LlamaJudge::new()
     }
+}
+
+impl LlmJudge for LlamaJudge {
+    fn judge(&mut self, rollout: &[RolloutStep]) -> f32 {
+        let body = build_request_body(&build_prompt(rollout), self.n_predict);
+        let response = http_post(&self.host, self.port, "/completion", &body)
+            .expect("llama.cpp judge request failed (is the server on :8080 up?)");
+        let content = extract_string_field(http_body(&response), "content")
+            .expect("llama.cpp response had no 'content' field");
+        parse_leading_float(&content).expect("llama.cpp judge did not return a float reward")
+    }
+}
+
+/// Builds the scoring prompt from a rollout: a short summary plus the action
+/// sequence (capped), ending with an instruction to reply with one number.
+fn build_prompt(rollout: &[RolloutStep]) -> String {
+    let actions: String = rollout
+        .iter()
+        .take(MAX_ACTION_CHARS)
+        .map(|s| match s.action {
+            Action::None => 'n',
+            Action::Left => 'l',
+            Action::Right => 'r',
+        })
+        .collect();
+    let (final_pos, final_speed) = rollout
+        .last()
+        .map(|s| (s.pos, s.speed))
+        .unwrap_or((0.0, 0.0));
+    format!(
+        "You are an impartial judge scoring how well an agent balanced a cart.\n\
+         The agent survived {steps} steps; final position {final_pos:.2}, final speed {final_speed:.2}.\n\
+         Action sequence (n=none, l=left, r=right): {actions}\n\
+         Reply with ONLY a single number between 0 and 1 rating the rollout's quality.",
+        steps = rollout.len(),
+    )
+}
+
+/// Wraps the prompt in llama.cpp's `/completion` JSON request body.
+fn build_request_body(prompt: &str, n_predict: u32) -> String {
+    format!(
+        "{{\"prompt\":\"{}\",\"n_predict\":{n_predict},\"temperature\":0,\"stream\":false}}",
+        json_escape(prompt),
+    )
+}
+
+/// Escapes `s` for embedding inside a JSON string literal.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Sends a JSON POST and returns the raw HTTP response (headers + body). Uses
+/// `Connection: close` so the body can be read to EOF without parsing framing.
+fn http_post(host: &str, port: u16, path: &str, body: &str) -> std::io::Result<String> {
+    let mut stream = TcpStream::connect((host, port))?;
+    let timeout = Duration::from_secs(HTTP_TIMEOUT_SECS);
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    let request = format!(
+        "POST {path} HTTP/1.1\r\n\
+         Host: {host}:{port}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {len}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {body}",
+        len = body.len(),
+    );
+    stream.write_all(request.as_bytes())?;
+    stream.flush()?;
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf)?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Returns the body of an HTTP response — everything after the blank line that
+/// separates headers from body. Falls back to the whole string if absent.
+fn http_body(response: &str) -> &str {
+    match response.find("\r\n\r\n") {
+        Some(i) => &response[i + 4..],
+        None => response,
+    }
+}
+
+/// Extracts the value of a JSON string field `"key": "…"` from `text`, decoding
+/// the standard escapes. Returns `None` if the field or its string value is
+/// missing.
+fn extract_string_field(text: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let key_pos = text.find(&needle)?;
+    let after_key = &text[key_pos + needle.len()..];
+    let colon = after_key.find(':')?;
+    let value = after_key[colon + 1..].trim_start();
+
+    let chars: Vec<char> = value.chars().collect();
+    if chars.first() != Some(&'"') {
+        return None;
+    }
+    let mut out = String::new();
+    let mut i = 1;
+    while i < chars.len() {
+        match chars[i] {
+            '"' => return Some(out),
+            '\\' => {
+                i += 1;
+                match *chars.get(i)? {
+                    '"' => out.push('"'),
+                    '\\' => out.push('\\'),
+                    '/' => out.push('/'),
+                    'n' => out.push('\n'),
+                    'r' => out.push('\r'),
+                    't' => out.push('\t'),
+                    'b' => out.push('\u{08}'),
+                    'f' => out.push('\u{0c}'),
+                    'u' => {
+                        let hex: String = chars.get(i + 1..i + 5)?.iter().collect();
+                        let code = u32::from_str_radix(&hex, 16).ok()?;
+                        out.push(char::from_u32(code).unwrap_or('\u{fffd}'));
+                        i += 4;
+                    }
+                    _ => return None,
+                }
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Parses the first floating-point number appearing in `s`. Tolerates the model
+/// wrapping the number in stray text (e.g. `"reward: 0.8"`).
+fn parse_leading_float(s: &str) -> Option<f32> {
+    let trimmed = s.trim();
+    if let Ok(v) = trimmed.parse::<f32>() {
+        return Some(v);
+    }
+    let bytes = trimmed.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'-' || c == b'+' || c == b'.' || c.is_ascii_digit() {
+            let start = i;
+            i += 1;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_digit()
+                    || matches!(bytes[i], b'.' | b'e' | b'E' | b'+' | b'-'))
+            {
+                i += 1;
+            }
+            if let Ok(v) = trimmed[start..i].parse::<f32>() {
+                return Some(v);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 // === --- GRPO --------------------------------------------------------- ===
@@ -177,6 +380,25 @@ impl GrpoTrainer {
 mod tests {
     use super::*;
 
+    /// A deterministic, offline judge for tests: returns a uniform random reward
+    /// in `[0, 1)`, ignoring the rollout. Lets the GRPO loop be exercised without
+    /// a live llama.cpp server.
+    struct RandomJudge {
+        rng: Rng,
+    }
+
+    impl RandomJudge {
+        fn new(rng: Rng) -> RandomJudge {
+            RandomJudge { rng }
+        }
+    }
+
+    impl LlmJudge for RandomJudge {
+        fn judge(&mut self, _rollout: &[RolloutStep]) -> f32 {
+            self.rng.next_f32()
+        }
+    }
+
     #[test]
     fn group_advantages_zero_mean() {
         let adv = group_advantages(&[1.0, 2.0, 3.0]);
@@ -203,6 +425,46 @@ mod tests {
             let r = judge.judge(&[]);
             assert!((0.0..1.0).contains(&r), "reward out of [0,1): {r}");
         }
+    }
+
+    #[test]
+    fn json_escape_escapes_specials() {
+        assert_eq!(json_escape("a\"b\\c\nd"), "a\\\"b\\\\c\\nd");
+    }
+
+    #[test]
+    fn extract_content_from_llama_response() {
+        // A trimmed-down shape of llama.cpp's /completion reply.
+        let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n\
+                    {\"content\":\"0.83\",\"stop\":true,\"model\":\"x\"}";
+        let body = http_body(resp);
+        let content = extract_string_field(body, "content").expect("has content");
+        assert_eq!(content, "0.83");
+        assert_eq!(parse_leading_float(&content), Some(0.83));
+    }
+
+    #[test]
+    fn extract_content_decodes_escapes() {
+        let body = "{\"content\":\"  0.5\\n\",\"stop\":true}";
+        let content = extract_string_field(body, "content").expect("has content");
+        assert_eq!(content, "  0.5\n");
+        assert_eq!(parse_leading_float(&content), Some(0.5));
+    }
+
+    #[test]
+    fn parse_leading_float_handles_stray_text() {
+        assert_eq!(parse_leading_float("0.7"), Some(0.7));
+        assert_eq!(parse_leading_float("  reward: -1.25 out of 1"), Some(-1.25));
+        assert_eq!(parse_leading_float("score is 3"), Some(3.0));
+        assert_eq!(parse_leading_float("no number here"), None);
+    }
+
+    #[test]
+    fn request_body_is_well_formed() {
+        let body = build_request_body("hi \"there\"", 16);
+        assert!(body.contains("\"prompt\":\"hi \\\"there\\\"\""));
+        assert!(body.contains("\"n_predict\":16"));
+        assert!(body.contains("\"stream\":false"));
     }
 
     // GRPO runs end to end on a few small groups without panicking and returns a

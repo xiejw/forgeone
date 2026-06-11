@@ -4,7 +4,7 @@ use hermes_rl::base::{EPISODES, seeded_rng};
 use hermes_rl::env::Env;
 use hermes_rl::policy::{NNPolicy, Policy, RandomPolicy, RevPolicy};
 use hermes_rl::runner::{Verbosity, run_episode};
-use hermes_rl::trainer_grpo::{GrpoTrainer, ITERATIONS, RandomJudge};
+use hermes_rl::trainer_grpo::{GrpoTrainer, ITERATIONS, LlamaJudge};
 use hermes_rl::trainer_reinforce::ReinforceTrainer;
 
 fn main() {
@@ -27,12 +27,14 @@ fn main() {
             Box::new(p)
         }
         "grpo" => {
-            // Train a fresh network with GRPO, scoring rollouts with the (random)
-            // LLM judge instead of the env reward, then demo it.
+            // Train a fresh network with GRPO, scoring rollouts with a llama.cpp
+            // judge on :8080 instead of the env reward, then demo it.
             let mut p = NNPolicy::new(rng.split());
-            let mut judge = RandomJudge::new(rng.split());
+            let mut judge = LlamaJudge::default();
             let avg = GrpoTrainer::default().run(&mut p, &mut judge, ITERATIONS, rng.split());
-            eprintln!("[grpo] trained {ITERATIONS} updates; EMA judge reward ~ {avg:.2}");
+            eprintln!(
+                "[grpo] trained {ITERATIONS} updates vs llama.cpp judge; EMA reward ~ {avg:.2}"
+            );
             Box::new(p)
         }
         other => {
