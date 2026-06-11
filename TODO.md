@@ -1,1 +1,2 @@
-- Added PPO or rollouts.
+- Added GRPO.
+

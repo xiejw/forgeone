@@ -17,4 +17,5 @@ pub mod nn;
 pub mod policy;
 pub mod rng;
 pub mod runner;
+pub mod simple_json;
 pub mod train;
