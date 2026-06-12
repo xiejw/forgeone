@@ -14,7 +14,7 @@
 //! in where a deterministic, offline [`LlmJudge`] is needed.
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use crate::base::EPISODES;
@@ -56,38 +56,157 @@ pub trait LlmJudge {
 /// Default host/port of the llama.cpp server.
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8080;
-/// Tokens the judge is allowed to generate — a float string is short.
-const N_PREDICT: u32 = 16;
-/// Socket read/write timeout: generation can be slow, so be generous.
-const HTTP_TIMEOUT_SECS: u64 = 120;
+/// Tokens the judge is allowed to generate. Generous so reasoning models have
+/// room to think before emitting the final number.
+const N_PREDICT: u32 = 20000;
+/// llama.cpp reasoning budget: `0` disables the `<think>` block entirely (the
+/// model answers directly), `-1` allows unlimited thinking. We disable it so the
+/// judge replies are short and fast.
+const REASONING_BUDGET: i32 = 0;
+/// Socket read/write timeout: generation can be slow, so allow up to 5 minutes.
+const HTTP_TIMEOUT_SECS: u64 = 300;
+/// Connection timeout: fail fast if the server isn't accepting connections.
+const CONNECT_TIMEOUT_SECS: u64 = 10;
+/// Bearer token sent to the server. llama.cpp accepts any key unless started
+/// with `--api-key`, so this placeholder satisfies clients that require one.
+const API_KEY: &str = "sk-no-key-required";
 /// Cap on the action string in the prompt, so long rollouts stay bounded.
 const MAX_ACTION_CHARS: usize = 256;
 
-/// A real LLM judge: it asks a llama.cpp server (its `/completion` endpoint) to
-/// rate a rollout, and parses the float reward out of the model's reply.
+/// Connection and generation settings for a llama.cpp server. Build a
+/// [`LlamaClient`] from it with [`LlamaConfig::build`]; [`Default`] uses the
+/// module constants (local server, no thinking, 5-minute request timeout).
+#[derive(Clone, Debug)]
+pub struct LlamaConfig {
+    /// Server host.
+    pub host: String,
+    /// Server port.
+    pub port: u16,
+    /// Max tokens the model may generate per request.
+    pub n_predict: u32,
+    /// Reasoning budget: `0` disables the `<think>` block, `-1` is unlimited.
+    pub reasoning_budget: i32,
+    /// Timeout for establishing the TCP connection.
+    pub connect_timeout: Duration,
+    /// Per-operation socket read/write timeout once connected.
+    pub request_timeout: Duration,
+    /// Bearer token (llama.cpp accepts any unless started with `--api-key`).
+    pub api_key: String,
+}
+
+impl Default for LlamaConfig {
+    fn default() -> LlamaConfig {
+        LlamaConfig {
+            host: DEFAULT_HOST.to_string(),
+            port: DEFAULT_PORT,
+            n_predict: N_PREDICT,
+            reasoning_budget: REASONING_BUDGET,
+            connect_timeout: Duration::from_secs(CONNECT_TIMEOUT_SECS),
+            request_timeout: Duration::from_secs(HTTP_TIMEOUT_SECS),
+            api_key: API_KEY.to_string(),
+        }
+    }
+}
+
+impl LlamaConfig {
+    /// Builds a [`LlamaClient`] that talks to the server described by this config.
+    pub fn build(self) -> LlamaClient {
+        LlamaClient { config: self }
+    }
+}
+
+/// A thin HTTP client for a llama.cpp server, configured by a [`LlamaConfig`].
+pub struct LlamaClient {
+    config: LlamaConfig,
+}
+
+impl LlamaClient {
+    /// Sends `prompt` to the `/completion` endpoint and returns the model's
+    /// generated text (the response's `content` field).
+    fn completion(&self, prompt: &str) -> std::io::Result<String> {
+        let response = self.post("/completion", &self.request_body(prompt))?;
+        eprintln!(
+            "[llama client] raw response:\n{}",
+            pretty_json(http_body(&response))
+        );
+        extract_string_field(http_body(&response), "content").ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "response had no 'content' field",
+            )
+        })
+    }
+
+    /// Wraps `prompt` in llama.cpp's `/completion` JSON request body.
+    ///
+    /// `cache_prompt` is disabled so every call resets the slot's KV cache —
+    /// otherwise a long reasoning generation can leave no room for the next
+    /// request, which then predicts 0 tokens and returns empty content.
+    fn request_body(&self, prompt: &str) -> String {
+        format!(
+            "{{\"prompt\":\"{}\",\"n_predict\":{n},\"temperature\":0,\"stream\":false,\"cache_prompt\":false,\"reasoning_budget\":{r}}}",
+            json_escape(prompt),
+            n = self.config.n_predict,
+            r = self.config.reasoning_budget,
+        )
+    }
+
+    /// Sends a JSON POST and returns the raw HTTP response (headers + body). Uses
+    /// `Connection: close` so the body can be read to EOF without parsing framing.
+    fn post(&self, path: &str, body: &str) -> std::io::Result<String> {
+        let cfg = &self.config;
+        let addr = (cfg.host.as_str(), cfg.port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "no address for host")
+            })?;
+        let mut stream = TcpStream::connect_timeout(&addr, cfg.connect_timeout)?;
+        stream.set_read_timeout(Some(cfg.request_timeout))?;
+        stream.set_write_timeout(Some(cfg.request_timeout))?;
+        let request = format!(
+            "POST {path} HTTP/1.1\r\n\
+             Host: {host}:{port}\r\n\
+             Authorization: Bearer {key}\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {len}\r\n\
+             Connection: close\r\n\
+             \r\n\
+             {body}",
+            host = cfg.host,
+            port = cfg.port,
+            key = cfg.api_key,
+            len = body.len(),
+        );
+        stream.write_all(request.as_bytes())?;
+        stream.flush()?;
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf)?;
+        Ok(String::from_utf8_lossy(&buf).into_owned())
+    }
+}
+
+/// A real LLM judge: it asks a llama.cpp [`LlamaClient`] to rate a rollout and
+/// parses the float reward out of the model's reply.
 ///
 /// The server is assumed reachable and to return a float string; any failure
 /// (connection, malformed reply, no number) panics, since a silently-wrong
 /// reward would corrupt training. Run the server with e.g.
 /// `llama-server -m model.gguf --port 8080`.
 pub struct LlamaJudge {
-    host: String,
-    port: u16,
-    n_predict: u32,
+    client: LlamaClient,
 }
 
 impl LlamaJudge {
-    /// Targets the default local endpoint, `127.0.0.1:8080`.
+    /// Judge talking to the default endpoint (see [`LlamaConfig::default`]).
     pub fn new() -> LlamaJudge {
-        LlamaJudge::with_endpoint(DEFAULT_HOST, DEFAULT_PORT)
+        LlamaJudge::with_config(LlamaConfig::default())
     }
 
-    /// Targets an explicit `host:port` llama.cpp server.
-    pub fn with_endpoint(host: &str, port: u16) -> LlamaJudge {
+    /// Judge built from an explicit [`LlamaConfig`].
+    pub fn with_config(config: LlamaConfig) -> LlamaJudge {
         LlamaJudge {
-            host: host.to_string(),
-            port,
-            n_predict: N_PREDICT,
+            client: config.build(),
         }
     }
 }
@@ -100,12 +219,22 @@ impl Default for LlamaJudge {
 
 impl LlmJudge for LlamaJudge {
     fn judge(&mut self, rollout: &[RolloutStep]) -> f32 {
-        let body = build_request_body(&build_prompt(rollout), self.n_predict);
-        let response = http_post(&self.host, self.port, "/completion", &body)
+        let prompt = build_prompt(rollout);
+        eprintln!("[llama judge] prompt:\n{prompt}");
+        let content = self
+            .client
+            .completion(&prompt)
             .expect("llama.cpp judge request failed (is the server on :8080 up?)");
-        let content = extract_string_field(http_body(&response), "content")
-            .expect("llama.cpp response had no 'content' field");
-        parse_leading_float(&content).expect("llama.cpp judge did not return a float reward")
+        // Reasoning models emit a <think>…</think> block before the answer; drop
+        // it so its scratch numbers aren't mistaken for the reward. The model is
+        // asked to wrap the final number in [Output]…[/Output]; honor that box
+        // when present, else fall back to scanning the whole answer.
+        let answer = strip_think(&content);
+        let boxed = extract_output(&answer).unwrap_or(&answer);
+        let reward =
+            parse_leading_float(boxed).expect("llama.cpp judge did not return a float reward");
+        eprintln!("[llama judge] parsed {boxed:?} -> reward {reward}");
+        reward
     }
 }
 
@@ -129,18 +258,12 @@ fn build_prompt(rollout: &[RolloutStep]) -> String {
         "You are an impartial judge scoring how well an agent balanced a cart.\n\
          The agent survived {steps} steps; final position {final_pos:.2}, final speed {final_speed:.2}.\n\
          Action sequence (n=none, l=left, r=right): {actions}\n\
-         Reply with ONLY a single number between 0.0 and 1.0 rating the rollout's quality.\n\
-         If the sequence could be longer, the score should be higher\n\
-         If the sequence could make the cart near center. The score should be higher",
+         Rate the rollout's quality as a single number between 0.0 and 1.0.\n\
+         The longer the sequence, the higher the score.\n\
+         The closer the cart stays to center, the higher the score.\n\
+         Put the final number inside an [Output][/Output] box, e.g. [Output]0.73[/Output].\n\
+         ",
         steps = rollout.len(),
-    )
-}
-
-/// Wraps the prompt in llama.cpp's `/completion` JSON request body.
-fn build_request_body(prompt: &str, n_predict: u32) -> String {
-    format!(
-        "{{\"prompt\":\"{}\",\"n_predict\":{n_predict},\"temperature\":0,\"stream\":false}}",
-        json_escape(prompt),
     )
 }
 
@@ -161,36 +284,36 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-/// Sends a JSON POST and returns the raw HTTP response (headers + body). Uses
-/// `Connection: close` so the body can be read to EOF without parsing framing.
-fn http_post(host: &str, port: u16, path: &str, body: &str) -> std::io::Result<String> {
-    let mut stream = TcpStream::connect((host, port))?;
-    let timeout = Duration::from_secs(HTTP_TIMEOUT_SECS);
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
-    let request = format!(
-        "POST {path} HTTP/1.1\r\n\
-         Host: {host}:{port}\r\n\
-         Content-Type: application/json\r\n\
-         Content-Length: {len}\r\n\
-         Connection: close\r\n\
-         \r\n\
-         {body}",
-        len = body.len(),
-    );
-    stream.write_all(request.as_bytes())?;
-    stream.flush()?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf)?;
-    Ok(String::from_utf8_lossy(&buf).into_owned())
-}
-
 /// Returns the body of an HTTP response — everything after the blank line that
 /// separates headers from body. Falls back to the whole string if absent.
 fn http_body(response: &str) -> &str {
     match response.find("\r\n\r\n") {
         Some(i) => &response[i + 4..],
         None => response,
+    }
+}
+
+/// Pretty-prints `json` by piping it through `jq` (assumed installed). Returns
+/// the original text unchanged if `jq` can't be spawned or exits non-zero — this
+/// is debug output, so it should never fail the run.
+fn pretty_json(json: &str) -> String {
+    use std::process::{Command, Stdio};
+    let child = Command::new("jq")
+        .args(["-C", "."])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let mut child = match child {
+        Ok(c) => c,
+        Err(_) => return json.to_string(),
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(json.as_bytes());
+    }
+    match child.wait_with_output() {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+        _ => json.to_string(),
     }
 }
 
@@ -238,6 +361,36 @@ fn extract_string_field(text: &str, key: &str) -> Option<String> {
         i += 1;
     }
     None
+}
+
+/// Removes any `<think>…</think>` reasoning blocks from `s`, returning only the
+/// text outside them. An unterminated `<think>` (no closing tag) drops the rest,
+/// since it's all still thinking. Matching is case-sensitive on the literal tags.
+fn strip_think(s: &str) -> String {
+    const OPEN: &str = "<think>";
+    const CLOSE: &str = "</think>";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(open) = rest.find(OPEN) {
+        out.push_str(&rest[..open]);
+        match rest[open + OPEN.len()..].find(CLOSE) {
+            Some(close) => rest = &rest[open + OPEN.len() + close + CLOSE.len()..],
+            None => return out, // unterminated: discard the rest
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Returns the text inside the first `[Output]…[/Output]` box, or `None` if the
+/// box is absent or unterminated.
+fn extract_output(s: &str) -> Option<&str> {
+    const OPEN: &str = "[Output]";
+    const CLOSE: &str = "[/Output]";
+    let start = s.find(OPEN)? + OPEN.len();
+    let rest = &s[start..];
+    let end = rest.find(CLOSE)?;
+    Some(&rest[..end])
 }
 
 /// Parses the first floating-point number appearing in `s`. Tolerates the model
@@ -435,6 +588,33 @@ mod tests {
     }
 
     #[test]
+    fn extract_output_reads_the_box() {
+        assert_eq!(
+            extract_output("noise [Output]0.73[/Output] tail"),
+            Some("0.73")
+        );
+        assert_eq!(
+            parse_leading_float(extract_output("[Output] 0.5 [/Output]").unwrap()),
+            Some(0.5)
+        );
+        // Missing or unterminated box: None, so the caller falls back.
+        assert_eq!(extract_output("just 0.42"), None);
+        assert_eq!(extract_output("[Output]0.4 oops"), None);
+    }
+
+    #[test]
+    fn strip_think_removes_reasoning() {
+        // The scratch "0.1" inside <think> must not be parsed as the reward.
+        let raw = "<think>maybe 0.1? no</think>0.9";
+        assert_eq!(strip_think(raw), "0.9");
+        assert_eq!(parse_leading_float(&strip_think(raw)), Some(0.9));
+        // No think block: passed through untouched.
+        assert_eq!(strip_think("0.42"), "0.42");
+        // Unterminated think: the rest is still thinking, so nothing is kept.
+        assert_eq!(strip_think("answer <think>hmm 0.5"), "answer ");
+    }
+
+    #[test]
     fn extract_content_from_llama_response() {
         // A trimmed-down shape of llama.cpp's /completion reply.
         let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n\
@@ -463,10 +643,17 @@ mod tests {
 
     #[test]
     fn request_body_is_well_formed() {
-        let body = build_request_body("hi \"there\"", 16);
+        let config = LlamaConfig {
+            n_predict: 16,
+            reasoning_budget: 0,
+            ..LlamaConfig::default()
+        };
+        let body = config.build().request_body("hi \"there\"");
         assert!(body.contains("\"prompt\":\"hi \\\"there\\\"\""));
         assert!(body.contains("\"n_predict\":16"));
         assert!(body.contains("\"stream\":false"));
+        assert!(body.contains("\"cache_prompt\":false"));
+        assert!(body.contains("\"reasoning_budget\":0"));
     }
 
     // GRPO runs end to end on a few small groups without panicking and returns a
